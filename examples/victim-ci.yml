@@ -1,0 +1,30 @@
+name: victim-ci
+
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: [self-hosted, linux, citadel-runner]
+    defaults:
+      run:
+        working-directory: examples
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Test
+        run: npm test
+
+      - name: Build
+        run: npm run build

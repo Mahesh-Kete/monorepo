@@ -1,0 +1,16 @@
+{
+  "name": "citadel-example",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Sample Node project used by the victim CI workflow.",
+  "main": "index.js",
+  "scripts": {
+    "start": "node index.js",
+    "test": "node test.js",
+    "build": "echo \"build done\""
+  },
+  "dependencies": {
+    "chalk": "^4.1.2",
+    "lodash": "^4.17.21"
+  }
+}
