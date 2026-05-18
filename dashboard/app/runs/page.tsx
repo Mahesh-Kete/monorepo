@@ -1,15 +1,14 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useState } from "react";
-import { Globe2, Cpu, FileText, ShieldAlert, RefreshCw, Shield } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { GitBranch, Search, RefreshCw, Shield } from "lucide-react";
 import { api } from "@/lib/api";
 import type { RunSummary } from "@/lib/types";
-import { CountChip, ModeBadge, SeverityBadge } from "@/components/badges";
+import { JobStatusDot, ModeBadge, SeverityBadge } from "@/components/badges";
 
 function relativeTime(iso: string): string {
-  const t = new Date(iso).getTime();
-  const diff = Math.max(0, Date.now() - t);
+  const diff = Math.max(0, Date.now() - new Date(iso).getTime());
   const sec = Math.floor(diff / 1000);
   if (sec < 60) return `${sec}s ago`;
   if (sec < 3600) return `${Math.floor(sec / 60)}m ago`;
@@ -21,6 +20,7 @@ export default function RunsPage() {
   const [runs, setRuns] = useState<RunSummary[] | null>(null);
   const [err, setErr] = useState<string | null>(null);
   const [refreshing, setRefreshing] = useState(false);
+  const [filter, setFilter] = useState("");
 
   const load = async () => {
     setRefreshing(true);
@@ -33,80 +33,121 @@ export default function RunsPage() {
       setRefreshing(false);
     }
   };
-  useEffect(() => {
-    load();
-  }, []);
+  useEffect(() => { load(); }, []);
+
+  const filtered = useMemo(() => {
+    if (!runs) return null;
+    if (!filter) return runs;
+    const s = filter.toLowerCase();
+    return runs.filter((r) =>
+      [r.repository, r.workflow, r.actor, r.sha, r.run_id, r.run_number]
+        .filter(Boolean)
+        .some((v) => (v as string).toLowerCase().includes(s)),
+    );
+  }, [runs, filter]);
 
   return (
     <div>
-      <div className="flex items-center justify-between mb-6">
-        <h1 className="text-2xl font-semibold tracking-tight">Workflow Runs</h1>
+      <div className="flex items-center justify-between mb-4">
+        <h1 className="text-xl font-semibold tracking-tight">Workflow runs</h1>
         <button
           onClick={load}
           disabled={refreshing}
-          className="inline-flex items-center gap-2 rounded border border-slate-700 px-3 py-1.5 text-sm text-slate-300 hover:bg-slate-800 disabled:opacity-50"
+          className="inline-flex items-center gap-1.5 rounded border border-surface-line bg-surface-card px-3 py-1.5 text-sm hover:bg-brand-50 hover:border-brand-200 disabled:opacity-50"
         >
           <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
           Refresh
         </button>
       </div>
 
+      <div className="mb-3 flex items-center gap-2">
+        <div className="relative w-72">
+          <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-ink-subtle" />
+          <input
+            placeholder="filter by repo, workflow, actor, sha…"
+            value={filter}
+            onChange={(e) => setFilter(e.target.value)}
+            className="w-full rounded border border-surface-line bg-surface-card pl-8 pr-3 py-1.5 text-sm focus:outline-none focus:border-brand-500"
+          />
+        </div>
+        {filtered && <span className="text-sm text-ink-muted">{filtered.length} run{filtered.length !== 1 ? "s" : ""}</span>}
+      </div>
+
       {err && (
-        <div className="rounded border border-red-800 bg-red-950/40 p-3 text-sm text-red-300 mono mb-4">
+        <div className="rounded border border-block-500/40 bg-block-50 p-3 text-sm text-block-700 mono mb-4">
           {err}
         </div>
       )}
 
-      {runs === null ? (
-        <div className="text-slate-400">Loading…</div>
-      ) : runs.length === 0 ? (
-        <EmptyState />
+      {filtered === null ? (
+        <div className="text-ink-subtle">Loading…</div>
+      ) : filtered.length === 0 ? (
+        runs && runs.length > 0 ? (
+          <div className="text-ink-subtle p-8 text-center bg-surface-card rounded border border-surface-line">
+            No runs match <span className="mono">{filter || "—"}</span>.
+          </div>
+        ) : (
+          <EmptyState />
+        )
       ) : (
-        <div className="rounded-lg border border-slate-800 overflow-hidden">
+        <div className="rounded-md border border-surface-line bg-surface-card shadow-card overflow-hidden">
           <table className="w-full text-sm">
-            <thead className="bg-slate-900/60 text-slate-400 text-xs uppercase tracking-wide">
+            <thead className="bg-surface-rail text-ink-muted text-xs uppercase tracking-wide">
               <tr>
-                <th className="px-3 py-2 text-left">Repo</th>
-                <th className="px-3 py-2 text-left">Workflow</th>
-                <th className="px-3 py-2 text-left">Run</th>
-                <th className="px-3 py-2 text-left">SHA</th>
-                <th className="px-3 py-2 text-left">Mode</th>
-                <th className="px-3 py-2 text-left">Events</th>
-                <th className="px-3 py-2 text-left">Detections</th>
-                <th className="px-3 py-2 text-left">Started</th>
+                <Th>Status</Th>
+                <Th>Repository</Th>
+                <Th>Workflow</Th>
+                <Th>Run</Th>
+                <Th>Commit</Th>
+                <Th>Mode</Th>
+                <Th>Events</Th>
+                <Th>Detections</Th>
+                <Th>Started</Th>
               </tr>
             </thead>
-            <tbody className="divide-y divide-slate-800">
-              {runs.map((r) => (
-                <tr key={r.id} className="hover:bg-slate-900/40 transition-colors">
-                  <td className="px-3 py-2">
-                    <Link href={`/runs/${r.id}`} className="text-cyan-400 hover:underline">
+            <tbody className="divide-y divide-surface-line">
+              {filtered.map((r) => (
+                <tr key={r.id} className="hover:bg-brand-50/40 transition-colors">
+                  <Td>
+                    <span className="inline-flex items-center gap-1.5">
+                      <JobStatusDot status={r.status} />
+                      <span className="text-xs text-ink-muted capitalize">{r.status.replace("_", " ")}</span>
+                    </span>
+                  </Td>
+                  <Td>
+                    <Link href={`/runs/${r.id}`} className="text-brand-600 font-medium hover:underline">
                       {r.repository}
                     </Link>
-                  </td>
-                  <td className="px-3 py-2 text-slate-300">{r.workflow ?? "—"}</td>
-                  <td className="px-3 py-2 mono text-slate-300">{r.run_number ? `#${r.run_number}` : r.run_id}</td>
-                  <td className="px-3 py-2 mono text-slate-400">{r.sha?.slice(0, 7) ?? "—"}</td>
-                  <td className="px-3 py-2"><ModeBadge mode={r.policy_mode} /></td>
-                  <td className="px-3 py-2">
-                    <div className="flex items-center gap-3">
-                      <CountChip icon={<Globe2 className="h-3.5 w-3.5 text-cyan-400" />} value={r.event_counts?.network ?? 0} label="network" />
-                      <CountChip icon={<Cpu className="h-3.5 w-3.5 text-emerald-400" />} value={r.event_counts?.process ?? 0} label="process" />
-                      <CountChip icon={<FileText className="h-3.5 w-3.5 text-amber-400" />} value={r.event_counts?.file ?? 0} label="file" />
-                      <CountChip icon={<ShieldAlert className="h-3.5 w-3.5 text-red-400" />} value={r.event_counts?.file_tamper ?? 0} label="tamper" />
+                  </Td>
+                  <Td>{r.workflow ?? "—"}</Td>
+                  <Td className="mono text-ink-muted">{r.run_number ? `#${r.run_number}` : r.run_id}</Td>
+                  <Td>
+                    {r.sha ? (
+                      <span className="inline-flex items-center gap-1 mono text-ink-muted">
+                        <GitBranch className="h-3 w-3" />
+                        {r.sha.slice(0, 7)}
+                      </span>
+                    ) : "—"}
+                  </Td>
+                  <Td><ModeBadge mode={r.policy_mode} /></Td>
+                  <Td>
+                    <div className="flex items-center gap-2 mono text-xs text-ink-muted">
+                      <span title="network">🌐 {r.event_counts.network}</span>
+                      <span title="process">🧬 {r.event_counts.process}</span>
+                      <span title="file">📝 {r.event_counts.file + r.event_counts.file_tamper}</span>
                     </div>
-                  </td>
-                  <td className="px-3 py-2">
+                  </Td>
+                  <Td>
                     {r.detection_count > 0 ? (
                       <span className="flex items-center gap-2">
-                        <span className="mono text-slate-300">{r.detection_count}</span>
+                        <span className="mono">{r.detection_count}</span>
                         {r.severity_max && <SeverityBadge severity={r.severity_max} />}
                       </span>
                     ) : (
-                      <span className="text-slate-500">—</span>
+                      <span className="text-ink-subtle">—</span>
                     )}
-                  </td>
-                  <td className="px-3 py-2 text-slate-400">{relativeTime(r.started_at)}</td>
+                  </Td>
+                  <Td className="text-ink-muted">{relativeTime(r.started_at)}</Td>
                 </tr>
               ))}
             </tbody>
@@ -117,12 +158,20 @@ export default function RunsPage() {
   );
 }
 
+function Th({ children }: { children: React.ReactNode }) {
+  return <th className="px-3 py-2 text-left font-medium">{children}</th>;
+}
+
+function Td({ children, className = "" }: { children: React.ReactNode; className?: string }) {
+  return <td className={`px-3 py-2 align-middle ${className}`}>{children}</td>;
+}
+
 function EmptyState() {
   return (
-    <div className="flex flex-col items-center justify-center py-16 text-center">
-      <Shield className="h-12 w-12 text-slate-700 mb-3" />
-      <p className="text-slate-300 mb-1">No runs yet.</p>
-      <p className="text-slate-500 text-sm mono">Add the citadel-setup step to your workflow to start streaming events.</p>
+    <div className="flex flex-col items-center justify-center py-20 text-center bg-surface-card rounded border border-surface-line">
+      <Shield className="h-12 w-12 text-ink-subtle mb-3" />
+      <p className="text-ink font-medium">No runs yet.</p>
+      <p className="text-ink-muted text-sm mt-1">Add the <span className="mono">citadel-setup</span> step to your workflow to start streaming events.</p>
     </div>
   );
 }

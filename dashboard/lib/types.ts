@@ -2,6 +2,7 @@
 // Keep in sync with /backend/internal/api/*.go.
 
 export type Severity = "info" | "low" | "medium" | "high" | "critical";
+export type Allowed = "allowed" | "blocked";
 
 export interface NetworkData {
   src_ip?: string;
@@ -9,6 +10,9 @@ export interface NetworkData {
   dst_port: number;
   hostname?: string;
   process?: string;
+  // Optional: agent in block mode sets `blocked: true` when the egress
+  // packet was dropped at cgroup_skb. Absent on audit-mode events.
+  blocked?: boolean;
 }
 
 export interface ProcessData {

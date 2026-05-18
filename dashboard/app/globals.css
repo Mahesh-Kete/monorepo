@@ -2,14 +2,74 @@
 @tailwind components;
 @tailwind utilities;
 
+/* ---------------------------------------------------------------------------
+ * Theme tokens. `:root` defines the light theme; `.dark` (applied to <html>
+ * by the theme toggle) overrides for dark mode. Every component palette
+ * pulls from these variables via Tailwind's color tokens — switching a
+ * single class on <html> reskins the entire app.
+ * ------------------------------------------------------------------------- */
+
 :root {
+  color-scheme: light;
+
+  /* surfaces */
+  --color-page: #f6f8fa;
+  --color-card: #ffffff;
+  --color-rail: #f3f5f8;
+  --color-line: #e4e7eb;
+
+  /* text */
+  --color-ink: #0f172a;
+  --color-ink-muted: #475569;
+  --color-ink-subtle: #94a3b8;
+
+  /* status tints */
+  --color-ok-bg: #ecfdf5;
+  --color-ok-text: #047857;
+  --color-warn-bg: #fffbeb;
+  --color-warn-text: #b45309;
+  --color-block-bg: #fef2f2;
+  --color-block-text: #b91c1c;
+
+  /* brand surfaces */
+  --color-brand-bg: #eff6ff;
+
+  --shadow-card: 0 1px 0 rgba(15, 23, 42, 0.04), 0 1px 3px rgba(15, 23, 42, 0.06);
+}
+
+.dark {
   color-scheme: dark;
+
+  /* surfaces (matches what StepSecurity's dark mode looks like in their
+   * recent screenshots: very dark navy panels on a near-black page) */
+  --color-page: #0b1220;
+  --color-card: #111827;
+  --color-rail: #0e1626;
+  --color-line: #1f2937;
+
+  /* text */
+  --color-ink: #e5e7eb;
+  --color-ink-muted: #9ca3af;
+  --color-ink-subtle: #6b7280;
+
+  /* status tints — semi-transparent versions of the brand colors so they
+   * sit nicely on the dark card surface */
+  --color-ok-bg: rgba(16, 185, 129, 0.12);
+  --color-ok-text: #6ee7b7;
+  --color-warn-bg: rgba(245, 158, 11, 0.12);
+  --color-warn-text: #fcd34d;
+  --color-block-bg: rgba(239, 68, 68, 0.14);
+  --color-block-text: #fca5a5;
+
+  --color-brand-bg: rgba(59, 130, 246, 0.14);
+
+  --shadow-card: 0 1px 0 rgba(0, 0, 0, 0.3), 0 1px 3px rgba(0, 0, 0, 0.45);
 }
 
 html,
 body {
-  background-color: #020617; /* slate-950 */
-  color: #f1f5f9;            /* slate-100 */
+  background-color: var(--color-page);
+  color: var(--color-ink);
   min-height: 100vh;
 }
 
@@ -18,7 +78,6 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 
-/* Smaller monospace defaults for code-like text */
 code, kbd, samp, pre, .mono {
   font-family: 'JetBrains Mono', ui-monospace, monospace;
 }
