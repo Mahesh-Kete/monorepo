@@ -1,27 +1,39 @@
-# Phase 0 STUB Dockerfile.
+# syntax=docker/dockerfile:1.6
 #
-# Replaced in Phase 5 by a real multi-stage Go build (chi + modernc.org/sqlite).
-# This stub just brings the container up green on :8080 so `make docker-up`
-# satisfies Phase 0 acceptance.
-FROM python:3.11-slim
+# citadel-backend — multi-stage Go build.
+#
+# Pure-Go SQLite (modernc.org/sqlite) → CGO_ENABLED=0 → fully static binary →
+# fits in a distroless/static runtime image.
 
-WORKDIR /app
+# ---------- Stage 1: builder ----------
+FROM golang:1.25-bookworm AS builder
 
-RUN printf '%s\n' \
-    'from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer' \
-    '' \
-    'class H(BaseHTTPRequestHandler):' \
-    '    def do_GET(self):' \
-    '        self.send_response(200)' \
-    '        self.send_header("Content-Type", "text/plain")' \
-    '        self.end_headers()' \
-    '        self.wfile.write(b"citadel-backend Phase 0 stub\n")' \
-    '    def log_message(self, *a, **kw):' \
-    '        return' \
-    '' \
-    'print("citadel-backend stub listening on :8080", flush=True)' \
-    'ThreadingHTTPServer(("0.0.0.0", 8080), H).serve_forever()' \
-    > stub.py
+WORKDIR /src
+
+# Cache deps separately from sources.
+COPY go.mod go.sum ./
+RUN go mod download
+
+COPY . .
+
+ENV CGO_ENABLED=0 \
+    GOOS=linux
+
+RUN go build -trimpath -ldflags="-s -w" -o /out/citadel-backend ./cmd/backend
+
+# ---------- Stage 2: runtime ----------
+FROM gcr.io/distroless/static-debian12:nonroot
+
+WORKDIR /
+
+COPY --from=builder /out/citadel-backend /usr/local/bin/citadel-backend
+
+# /data is mounted from the docker-compose volume (citadel.db lives here).
+# distroless/static doesn't include `mkdir`, so the compose volume must
+# already exist — which it does (declared as `backend-data` in compose).
+USER nonroot:nonroot
 
 EXPOSE 8080
-CMD ["python", "stub.py"]
+
+ENTRYPOINT ["/usr/local/bin/citadel-backend"]
+CMD ["--addr=:8080", "--db-path=/data/citadel.db"]

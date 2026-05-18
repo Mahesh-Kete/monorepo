@@ -1,0 +1,163 @@
+name: 'Citadel Setup'
+description: 'Runtime EDR for CI/CD: load eBPF probes inside the runner, ship events to Citadel backend, snapshot workspace, run agent for the lifetime of the job.'
+author: 'Mahesh-Kete'
+branding:
+  icon: 'shield'
+  color: 'blue'
+
+inputs:
+  mode:
+    description: 'audit | block'
+    required: false
+    default: 'audit'
+  backend-url:
+    description: 'Citadel backend URL (e.g. http://backend.internal:8080)'
+    required: true
+  image-tag:
+    description: 'Citadel agent image tag. Use "dev" for locally-built images (skips docker pull).'
+    required: false
+    default: 'latest'
+  image-repo:
+    description: 'Docker repository prefix. Default is the workflow repo''s GHCR namespace.'
+    required: false
+    default: ''
+  watch-path:
+    description: 'Workspace root to monitor for file-tamper detection.'
+    required: false
+    default: ''
+  container-name:
+    description: 'Docker container name for the agent.'
+    required: false
+    default: 'citadel'
+
+runs:
+  using: 'composite'
+  steps:
+    # ----------------------------------------------------------------
+    # 1. Write GitHub Actions context to a file the agent can read.
+    # ----------------------------------------------------------------
+    - name: 'Citadel: write workflow metadata'
+      shell: bash
+      run: |
+        cat > /tmp/citadel-meta.json <<EOF
+        {
+          "repository":   "${GITHUB_REPOSITORY}",
+          "workflow":     "${GITHUB_WORKFLOW}",
+          "workflow_file":"${GITHUB_WORKFLOW_REF}",
+          "run_id":       "${GITHUB_RUN_ID}",
+          "run_number":   "${GITHUB_RUN_NUMBER}",
+          "sha":          "${GITHUB_SHA}",
+          "ref":          "${GITHUB_REF}",
+          "actor":        "${GITHUB_ACTOR}",
+          "event_name":   "${GITHUB_EVENT_NAME}",
+          "job":          "${GITHUB_JOB}"
+        }
+        EOF
+        : > /tmp/citadel-current-step
+
+    # ----------------------------------------------------------------
+    # 2. Install the citadel-step helper so user steps can tag themselves.
+    #    Usage in a workflow step: `run: citadel-step "npm install"`
+    # ----------------------------------------------------------------
+    - name: 'Citadel: install citadel-step helper'
+      shell: bash
+      run: |
+        sudo tee /usr/local/bin/citadel-step >/dev/null <<'EOF'
+        #!/usr/bin/env bash
+        # Mark the current workflow step name so the agent can tag events.
+        echo "$*" > /tmp/citadel-current-step
+        EOF
+        sudo chmod +x /usr/local/bin/citadel-step
+
+    # ----------------------------------------------------------------
+    # 3. Resolve the agent image ref (dev → local, otherwise GHCR).
+    # ----------------------------------------------------------------
+    - name: 'Citadel: resolve image ref'
+      id: img
+      shell: bash
+      run: |
+        if [ "${{ inputs.image-tag }}" = "dev" ]; then
+          echo "ref=citadel-agent:dev" >> "$GITHUB_OUTPUT"
+        else
+          REPO="${{ inputs.image-repo }}"
+          if [ -z "$REPO" ]; then
+            REPO="ghcr.io/${GITHUB_REPOSITORY_OWNER,,}"
+          fi
+          echo "ref=${REPO}/citadel-agent:${{ inputs.image-tag }}" >> "$GITHUB_OUTPUT"
+        fi
+
+    # ----------------------------------------------------------------
+    # 4. Workspace baseline snapshot (immediately after checkout).
+    #    This runs the agent's `snapshot` subcommand inside the same image.
+    # ----------------------------------------------------------------
+    - name: 'Citadel: snapshot workspace'
+      shell: bash
+      run: |
+        WATCH_PATH="${{ inputs.watch-path }}"
+        if [ -z "$WATCH_PATH" ]; then
+          WATCH_PATH="$GITHUB_WORKSPACE"
+        fi
+        echo "==> Snapshotting $WATCH_PATH"
+        docker run --rm \
+          -v "$WATCH_PATH":/workspace:ro \
+          -v /tmp:/host-tmp \
+          "${{ steps.img.outputs.ref }}" \
+          snapshot --path /workspace --out /host-tmp/citadel-baseline.json
+        echo "==> Baseline written to /tmp/citadel-baseline.json"
+
+    # ----------------------------------------------------------------
+    # 5. Start the agent in the background.
+    #    --privileged --pid=host --network=host because eBPF needs them.
+    # ----------------------------------------------------------------
+    - name: 'Citadel: start agent'
+      shell: bash
+      run: |
+        WATCH_PATH="${{ inputs.watch-path }}"
+        if [ -z "$WATCH_PATH" ]; then
+          WATCH_PATH="$GITHUB_WORKSPACE"
+        fi
+        docker run -d \
+          --name "${{ inputs.container-name }}" \
+          --privileged --pid=host --network=host \
+          -v /sys/fs/cgroup:/sys/fs/cgroup \
+          -v /tmp:/tmp \
+          -v "$WATCH_PATH":"$WATCH_PATH" \
+          "${{ steps.img.outputs.ref }}" \
+          run \
+            --mode="${{ inputs.mode }}" \
+            --backend-url="${{ inputs.backend-url }}" \
+            --meta-file=/tmp/citadel-meta.json \
+            --watch-path="$WATCH_PATH" \
+            --log-file=/tmp/citadel-agent.log
+        # Give the agent time to attach probes.
+        sleep 3
+        echo "==> Citadel agent running in container ${{ inputs.container-name }}"
+        docker ps --filter "name=${{ inputs.container-name }}" --format "{{.Names}} {{.Status}}"
+
+    # ----------------------------------------------------------------
+    # 6. Post-job: diff the workspace against the baseline (always),
+    #    then tear the agent down.
+    # ----------------------------------------------------------------
+    - name: 'Citadel: workspace diff + teardown'
+      if: always()
+      shell: bash
+      run: |
+        WATCH_PATH="${{ inputs.watch-path }}"
+        if [ -z "$WATCH_PATH" ]; then
+          WATCH_PATH="$GITHUB_WORKSPACE"
+        fi
+        echo "==> Diffing workspace against baseline"
+        docker run --rm \
+          -v "$WATCH_PATH":/workspace:ro \
+          -v /tmp:/host-tmp \
+          "${{ steps.img.outputs.ref }}" \
+          diff \
+            --before /host-tmp/citadel-baseline.json \
+            --after-path /workspace \
+            --backend-url="${{ inputs.backend-url }}" \
+            --meta-file=/host-tmp/citadel-meta.json || true
+
+        echo "==> Stopping citadel agent"
+        docker logs "${{ inputs.container-name }}" 2>&1 | tail -50 || true
+        docker stop "${{ inputs.container-name }}" >/dev/null 2>&1 || true
+        docker rm   "${{ inputs.container-name }}" >/dev/null 2>&1 || true

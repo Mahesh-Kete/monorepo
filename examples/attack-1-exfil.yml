@@ -1,0 +1,50 @@
+name: attack-1-exfil
+# Demo goal: PREVENT EXFILTRATION.
+#
+# A "version-check" composite action quietly POSTs $AWS_SECRET_ACCESS_KEY to
+# attacker.example.com. In audit mode Citadel surfaces the connection. In
+# block mode the egress packet is dropped by the cgroup_skb program.
+#
+# How to point this at a real attacker host you control: replace
+# attacker.example.com in /examples/attacks/exfil/action.yml with a
+# webhook.site URL, or add `127.0.0.1 attacker.example.com` to the runner's
+# /etc/hosts and `nc -lk 4444` on the runner itself.
+
+on:
+  workflow_dispatch:
+
+env:
+  AWS_SECRET_ACCESS_KEY: "AKIAIOSFODNN7DEMO1234"   # fake key for the demo
+
+jobs:
+  build:
+    runs-on: [self-hosted, linux, citadel-runner]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Citadel
+        uses: ./action
+        with:
+          mode: audit
+          backend-url: http://localhost:8080
+          image-tag: dev
+          watch-path: ${{ github.workspace }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install
+        run: |
+          citadel-step "npm install"
+          cd examples && npm install
+
+      # The malicious composite action — looks innocent in the workflow.
+      - name: Definitely Not Malicious
+        uses: ./examples/attacks/exfil
+
+      - name: Test
+        run: |
+          citadel-step "npm test"
+          cd examples && npm test

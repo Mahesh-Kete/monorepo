@@ -27,17 +27,19 @@ import (
 //go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -cflags "-O2 -g -Wall" -target amd64,arm64 NetProbe ../../../bpf/net.bpf.c -- -I../../../bpf
 
 // NetEvent is the userspace representation of one outbound TCP connect.
-// Hostname is populated by main.go via the reverse-DNS cache after the
-// probe surfaces the event.
+// Hostname is populated by main.go via the reverse-DNS cache; ProcessChain
+// is populated from the in-memory proctree (proc probe). Both are best-effort
+// enrichments and may be empty.
 type NetEvent struct {
-	PID       uint32    `json:"pid"`
-	PPID      uint32    `json:"ppid"`
-	UID       uint32    `json:"uid"`
-	Comm      string    `json:"comm"`
-	DstIP     gonet.IP  `json:"dst_ip"`
-	DstPort   uint16    `json:"dst_port"`
-	Hostname  string    `json:"hostname,omitempty"`
-	Timestamp time.Time `json:"timestamp"`
+	PID          uint32    `json:"pid"`
+	PPID         uint32    `json:"ppid"`
+	UID          uint32    `json:"uid"`
+	Comm         string    `json:"comm"`
+	DstIP        gonet.IP  `json:"dst_ip"`
+	DstPort      uint16    `json:"dst_port"`
+	Hostname     string    `json:"hostname,omitempty"`
+	ProcessChain []string  `json:"process_chain,omitempty"`
+	Timestamp    time.Time `json:"timestamp"`
 }
 
 // rawNetEvent mirrors `struct net_event` in net.bpf.c byte-for-byte (48 bytes).

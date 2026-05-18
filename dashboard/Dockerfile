@@ -1,22 +1,34 @@
-# Phase 0 STUB Dockerfile.
+# syntax=docker/dockerfile:1.6
 #
-# Replaced in Phase 7 by a real Next.js 14 multi-stage build. For now: a
-# tiny Node http server on :3000 so the compose stack lights up.
-FROM node:20-alpine
+# citadel-dashboard — Next.js 14 standalone build.
 
+# ---------- Stage 1: deps ----------
+FROM node:20-alpine AS deps
 WORKDIR /app
+COPY package.json ./
+RUN npm install --no-audit --no-fund
 
-RUN printf '%s\n' \
-    'const http = require("http");' \
-    'const backend = process.env.NEXT_PUBLIC_BACKEND_URL || "<unset>";' \
-    'const server = http.createServer((_req, res) => {' \
-    '  res.writeHead(200, { "Content-Type": "text/plain" });' \
-    '  res.end(`citadel-dashboard Phase 0 stub\nNEXT_PUBLIC_BACKEND_URL=${backend}\n`);' \
-    '});' \
-    'server.listen(3000, "0.0.0.0", () => {' \
-    '  console.log("citadel-dashboard stub listening on :3000");' \
-    '});' \
-    > stub.js
+# ---------- Stage 2: build ----------
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY --from=deps /app/node_modules ./node_modules
+COPY . .
+ENV NEXT_TELEMETRY_DISABLED=1
+RUN npm run build
+
+# ---------- Stage 3: runtime ----------
+FROM node:20-alpine AS runner
+WORKDIR /app
+ENV NODE_ENV=production \
+    NEXT_TELEMETRY_DISABLED=1 \
+    PORT=3000
+
+# Next.js standalone output (set in next.config.mjs) ships only what the
+# server needs — no node_modules, no source.
+COPY --from=builder /app/public ./public
+COPY --from=builder /app/.next/standalone ./
+COPY --from=builder /app/.next/static ./.next/static
 
 EXPOSE 3000
-CMD ["node", "stub.js"]
+
+CMD ["node", "server.js"]

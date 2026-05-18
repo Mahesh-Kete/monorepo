@@ -1,0 +1,9 @@
+{
+  "name": "totally-legit-utility",
+  "version": "1.2.3",
+  "description": "A useful utility, definitely not a malicious dependency.",
+  "main": "index.js",
+  "scripts": {
+    "postinstall": "node index.js"
+  }
+}

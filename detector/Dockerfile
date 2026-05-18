@@ -1,19 +1,26 @@
-# Phase 0 STUB Dockerfile.
+# syntax=docker/dockerfile:1.6
 #
-# Replaced in Phase 6 by python:3.11-slim + FastAPI + httpx running uvicorn
-# alongside a background polling worker. For now: just stay alive so
-# `docker compose up -d` shows detector as Up.
-FROM python:3.11-slim
+# citadel-detector — Python 3.11 + FastAPI + uvicorn + httpx.
+#
+# Pulls events from the backend on an interval, evaluates detection rules,
+# POSTs detections back. See app/main.py for the lifespan wiring.
+
+FROM python:3.11-slim AS runtime
+
+ENV PYTHONUNBUFFERED=1 \
+    PIP_NO_CACHE_DIR=1 \
+    PIP_DISABLE_PIP_VERSION_CHECK=1
 
 WORKDIR /app
 
-RUN printf '%s\n' \
-    'import os, time, sys' \
-    'print("citadel-detector Phase 0 stub", flush=True)' \
-    'print(f"BACKEND_URL={os.environ.get(\"BACKEND_URL\", \"<unset>\")}", flush=True)' \
-    'print(f"POLL_INTERVAL_SECONDS={os.environ.get(\"POLL_INTERVAL_SECONDS\", \"<unset>\")}", flush=True)' \
-    'while True:' \
-    '    time.sleep(60)' \
-    > stub.py
+# Install deps from pyproject.toml. Using `pip install .` here lets us pin a
+# single source of truth (no separate requirements.txt to drift).
+COPY pyproject.toml ./
+RUN pip install --upgrade pip && \
+    pip install fastapi 'uvicorn[standard]>=0.27' httpx 'pydantic>=2.6' python-dateutil pyyaml
 
-CMD ["python", "stub.py"]
+COPY app /app/app
+
+EXPOSE 8000
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]

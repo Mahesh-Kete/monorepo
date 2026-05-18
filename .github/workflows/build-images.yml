@@ -1,0 +1,60 @@
+name: build-images
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'agent/**'
+      - 'backend/**'
+      - 'detector/**'
+      - 'dashboard/**'
+      - '.github/workflows/build-images.yml'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  packages: write   # required to push to GHCR
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_OWNER: ${{ github.repository_owner }}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        component:
+          - { name: agent,     context: ./agent     }
+          - { name: backend,   context: ./backend   }
+          - { name: detector,  context: ./detector  }
+          - { name: dashboard, context: ./dashboard }
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Normalize image namespace (GHCR requires lowercase)
+        id: ns
+        run: |
+          echo "owner=${IMAGE_OWNER,,}" >> "$GITHUB_OUTPUT"
+
+      - name: Build and push ${{ matrix.component.name }}
+        uses: docker/build-push-action@v5
+        with:
+          context: ${{ matrix.component.context }}
+          push: true
+          tags: |
+            ${{ env.REGISTRY }}/${{ steps.ns.outputs.owner }}/citadel-${{ matrix.component.name }}:latest
+            ${{ env.REGISTRY }}/${{ steps.ns.outputs.owner }}/citadel-${{ matrix.component.name }}:${{ github.sha }}
+          cache-from: type=gha,scope=${{ matrix.component.name }}
+          cache-to: type=gha,scope=${{ matrix.component.name }},mode=max

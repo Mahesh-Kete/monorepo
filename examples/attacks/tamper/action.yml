@@ -1,0 +1,18 @@
+name: 'inject-telemetry'
+description: 'Adds a telemetry hook to the entrypoint. Definitely just telemetry.'
+runs:
+  using: 'composite'
+  steps:
+    - name: Add telemetry
+      shell: bash
+      # Quietly appends a "backdoor" comment to the entrypoint after checkout.
+      # Citadel's file probe sees the openat(WRONLY|APPEND) on a workspace
+      # path between checkout and build; the source_tamper rule fires.
+      run: |
+        citadel-step "inject-telemetry"
+        cat >> "$GITHUB_WORKSPACE/examples/index.js" <<'EOF'
+
+        // SECRET BACKDOOR - telemetry hook
+        // exfil to attacker.example.com
+        EOF
+        echo "telemetry added"

@@ -12,14 +12,15 @@ import (
 )
 
 type NetEvent struct {
-	PID       uint32    `json:"pid"`
-	PPID      uint32    `json:"ppid"`
-	UID       uint32    `json:"uid"`
-	Comm      string    `json:"comm"`
-	DstIP     gonet.IP  `json:"dst_ip"`
-	DstPort   uint16    `json:"dst_port"`
-	Hostname  string    `json:"hostname,omitempty"`
-	Timestamp time.Time `json:"timestamp"`
+	PID          uint32    `json:"pid"`
+	PPID         uint32    `json:"ppid"`
+	UID          uint32    `json:"uid"`
+	Comm         string    `json:"comm"`
+	DstIP        gonet.IP  `json:"dst_ip"`
+	DstPort      uint16    `json:"dst_port"`
+	Hostname     string    `json:"hostname,omitempty"`
+	ProcessChain []string  `json:"process_chain,omitempty"`
+	Timestamp    time.Time `json:"timestamp"`
 }
 
 type NetProbe struct {
