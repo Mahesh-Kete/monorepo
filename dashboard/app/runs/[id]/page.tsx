@@ -9,7 +9,7 @@ import {
 import { api, type ProcessTreeNode } from "@/lib/api";
 import type { CitadelEvent, DetectionRow, RunDetail } from "@/lib/types";
 import {
-  JobStatusDot, ModeBadge, SeverityBadge, StatusPill,
+  JobStatusDot, SeverityBadge, StatusPill,
 } from "@/components/badges";
 import { LiveIndicator } from "@/components/live-indicator";
 import { useLivePoll } from "@/lib/use-live-poll";
@@ -45,7 +45,9 @@ export default function RunDetailPage() {
   if (err) return <ErrorBox msg={err} />;
   if (!data) return <div className="text-ink-subtle">Loading…</div>;
 
-  const { run, events, detections } = data;
+  const { run } = data;
+  const events = data.events ?? [];
+  const detections = data.detections ?? [];
   const byType = (t: string) => events.filter((e) => e.type === t);
 
   return (
@@ -93,7 +95,6 @@ function RunHeader({ run }: { run: RunDetail["run"] }) {
         <span className="mono text-ink-muted text-sm">
           {run.run_number ? `#${run.run_number}` : `run ${run.run_id}`}
         </span>
-        <ModeBadge mode={run.policy_mode} />
       </div>
       <div className="mt-2.5 flex flex-wrap items-center gap-x-5 gap-y-1 text-sm text-ink-muted">
         {run.sha && (

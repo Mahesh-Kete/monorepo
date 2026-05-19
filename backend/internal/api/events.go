@@ -157,7 +157,7 @@ func upsertRun(ctx context.Context, tx *sql.Tx, wf incomingWorkflow) (int64, err
 		LIMIT 1`,
 		repo, wf.Workflow, repo, wf.Workflow, repo).Scan(&policyMode)
 	if policyMode == "" {
-		policyMode = "audit"
+		policyMode = "block"
 	}
 
 	// Insert new run.

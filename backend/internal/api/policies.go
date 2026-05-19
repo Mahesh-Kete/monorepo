@@ -23,12 +23,13 @@ type policy struct {
 }
 
 // defaultPolicy is returned by /api/policies/applicable when no DB row
-// matches. Permissive on purpose — judges should see "Citadel is watching"
-// before they see "Citadel is blocking."
+// matches. Mode is always "block" — audit mode was removed; Citadel has a
+// single mode now. Empty allowlist + empty rules means the default behaves
+// permissively until a real policy is connected.
 var defaultPolicy = policy{
 	ID:             0,
 	Name:           "default-permissive",
-	Mode:           "audit",
+	Mode:           "block",
 	Allowlist:      json.RawMessage(`[]`),
 	DetectionRules: json.RawMessage(`{}`),
 }

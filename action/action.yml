@@ -6,10 +6,12 @@ branding:
   color: 'blue'
 
 inputs:
+  # mode is no longer configurable — Citadel runs in block mode only.
+  # Kept as an input for backwards-compat with workflows that still pass it.
   mode:
-    description: 'audit | block'
+    description: '(deprecated — always "block")'
     required: false
-    default: 'audit'
+    default: 'block'
   backend-url:
     description: 'Citadel backend URL (e.g. http://backend.internal:8080)'
     required: true
@@ -129,7 +131,7 @@ runs:
           -v "$WATCH_PATH":"$WATCH_PATH" \
           "${{ steps.img.outputs.ref }}" \
           run \
-            --mode="${{ inputs.mode }}" \
+            --mode=block \
             --backend-url="${{ inputs.backend-url }}" \
             --meta-file=/tmp/citadel-meta.json \
             --watch-path="$WATCH_PATH" \
