@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useMemo, useState } from "react";
-import { GitBranch, Search, RefreshCw, Shield } from "lucide-react";
+import { GitBranch, Search, RefreshCw, Shield, Trash2 } from "lucide-react";
 import { api } from "@/lib/api";
 import type { RunSummary } from "@/lib/types";
 import { JobStatusDot, ModeBadge, SeverityBadge } from "@/components/badges";
@@ -45,6 +45,35 @@ export default function RunsPage() {
     }
   };
 
+  const unknownCount = useMemo(
+    () => (runs ? runs.filter((r) => r.repository === "(unknown)").length : 0),
+    [runs],
+  );
+
+  const onDelete = async (r: RunSummary) => {
+    const label = r.repository === "(unknown)"
+      ? `unknown run #${r.id}`
+      : `${r.repository} run ${r.run_number ? `#${r.run_number}` : r.run_id}`;
+    if (!confirm(`Delete ${label}? Its events and detections will also be removed.`)) return;
+    try {
+      await api.deleteRun(r.id);
+      await refetch();
+    } catch (e) {
+      alert(`Failed to delete: ${(e as Error).message}`);
+    }
+  };
+
+  const onCleanupUnknown = async () => {
+    if (!confirm(`Delete all ${unknownCount} run(s) where repository is "(unknown)"? Their events and detections will also be removed.`)) return;
+    try {
+      const res = await api.deleteUnknownRuns();
+      await refetch();
+      alert(`Deleted ${res.deleted} run(s).`);
+    } catch (e) {
+      alert(`Failed to clean up: ${(e as Error).message}`);
+    }
+  };
+
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
@@ -52,14 +81,26 @@ export default function RunsPage() {
           <h1 className="text-xl font-semibold tracking-tight">Workflow runs</h1>
           <LiveIndicator updatedAt={updatedAt} />
         </div>
-        <button
-          onClick={onRefresh}
-          disabled={manualRefresh}
-          className="inline-flex items-center gap-1.5 rounded border border-surface-line bg-surface-card px-3 py-1.5 text-sm hover:bg-brand-50 hover:border-brand-200 disabled:opacity-50"
-        >
-          <RefreshCw className={`h-4 w-4 ${manualRefresh ? "animate-spin" : ""}`} />
-          Refresh
-        </button>
+        <div className="flex items-center gap-2">
+          {unknownCount > 0 && (
+            <button
+              onClick={onCleanupUnknown}
+              className="inline-flex items-center gap-1.5 rounded border border-block-500/40 bg-block-50 px-3 py-1.5 text-sm text-block-700 hover:bg-block-100"
+              title='Delete all runs with repository="(unknown)"'
+            >
+              <Trash2 className="h-4 w-4" />
+              Clean up unknown ({unknownCount})
+            </button>
+          )}
+          <button
+            onClick={onRefresh}
+            disabled={manualRefresh}
+            className="inline-flex items-center gap-1.5 rounded border border-surface-line bg-surface-card px-3 py-1.5 text-sm hover:bg-brand-50 hover:border-brand-200 disabled:opacity-50"
+          >
+            <RefreshCw className={`h-4 w-4 ${manualRefresh ? "animate-spin" : ""}`} />
+            Refresh
+          </button>
+        </div>
       </div>
 
       <div className="mb-3 flex items-center gap-2">
@@ -106,6 +147,7 @@ export default function RunsPage() {
                 <Th>Events</Th>
                 <Th>Detections</Th>
                 <Th>Started</Th>
+                <Th></Th>
               </tr>
             </thead>
             <tbody className="divide-y divide-surface-line">
@@ -164,6 +206,16 @@ export default function RunsPage() {
                     )}
                   </Td>
                   <Td className="text-ink-muted">{relativeTime(r.started_at)}</Td>
+                  <Td className="text-right">
+                    <button
+                      onClick={() => onDelete(r)}
+                      title="Delete this run"
+                      aria-label="Delete run"
+                      className="rounded p-1 text-ink-subtle hover:bg-block-50 hover:text-block-700"
+                    >
+                      <Trash2 className="h-4 w-4" />
+                    </button>
+                  </Td>
                 </tr>
               ))}
             </tbody>
@@ -174,7 +226,7 @@ export default function RunsPage() {
   );
 }
 
-function Th({ children }: { children: React.ReactNode }) {
+function Th({ children }: { children?: React.ReactNode }) {
   return <th className="px-3 py-2 text-left font-medium">{children}</th>;
 }
 

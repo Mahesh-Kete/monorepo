@@ -41,7 +41,9 @@ func New(db *sql.DB, logger *slog.Logger) http.Handler {
 		r.Get("/events", a.handleListEvents)
 
 		r.Get("/runs", a.handleListRuns)
+		r.Delete("/runs/unknown", a.handleDeleteUnknownRuns)
 		r.Get("/runs/{id}", a.handleGetRun)
+		r.Delete("/runs/{id}", a.handleDeleteRun)
 		r.Get("/runs/{id}/process-tree", a.handleGetProcessTree)
 		r.Get("/runs/{id}/baseline-domains", a.handleGetBaselineDomains)
 
@@ -75,7 +77,7 @@ func healthz(w http.ResponseWriter, _ *http.Request) {
 func corsMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Access-Control-Allow-Origin", "*")
-		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		w.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
 		w.Header().Set("Access-Control-Allow-Headers", "Content-Type")
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)

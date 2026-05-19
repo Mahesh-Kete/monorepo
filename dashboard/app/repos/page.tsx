@@ -1,7 +1,8 @@
 "use client";
 
 import { useState } from "react";
-import { Plus, FolderGit2, RefreshCw, Trash2, AlertTriangle, CheckCircle2 } from "lucide-react";
+import Link from "next/link";
+import { Plus, FolderGit2, RefreshCw, Trash2, AlertTriangle, CheckCircle2, ExternalLink } from "lucide-react";
 import { api } from "@/lib/api";
 import type { ConnectedRepo } from "@/lib/types";
 import { LiveIndicator } from "@/components/live-indicator";
@@ -102,13 +103,22 @@ function RepoRow({ repo, onChanged }: { repo: ConnectedRepo; onChanged: () => vo
   return (
     <tr className="hover:bg-brand-50/40">
       <td className="px-3 py-2">
-        <a
-          href={`https://github.com/${repo.repository}`}
-          target="_blank" rel="noopener noreferrer"
-          className="font-medium text-brand-600 hover:underline mono"
-        >
-          {repo.repository}
-        </a>
+        <div className="flex items-center gap-2">
+          <Link
+            href={`/repos/${repo.id}`}
+            className="font-medium text-brand-600 hover:underline mono"
+          >
+            {repo.repository}
+          </Link>
+          <a
+            href={`https://github.com/${repo.repository}`}
+            target="_blank" rel="noopener noreferrer"
+            className="text-ink-subtle hover:text-brand-600"
+            title="Open on GitHub"
+          >
+            <ExternalLink className="h-3.5 w-3.5" />
+          </a>
+        </div>
         {repo.note && <div className="text-xs text-ink-muted mt-0.5">{repo.note}</div>}
       </td>
       <td className="px-3 py-2">

@@ -23,6 +23,10 @@ export const api = {
   listRuns: (limit = 50) => fetchJSON<RunSummary[]>(`/api/runs?limit=${limit}`),
   getRun: (id: number, type?: string) =>
     fetchJSON<RunDetail>(`/api/runs/${id}${type ? `?type=${type}` : ""}`),
+  deleteRun: (id: number) =>
+    fetchJSON<{ deleted: number }>(`/api/runs/${id}`, { method: "DELETE" }),
+  deleteUnknownRuns: () =>
+    fetchJSON<{ deleted: number }>(`/api/runs/unknown`, { method: "DELETE" }),
   getProcessTree: (id: number) =>
     fetchJSON<ProcessTreeNode[]>(`/api/runs/${id}/process-tree`),
   getBaselineDomains: (id: number) =>

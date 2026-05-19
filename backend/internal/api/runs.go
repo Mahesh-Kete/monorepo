@@ -231,6 +231,53 @@ func (a *API) handleGetRun(w http.ResponseWriter, r *http.Request) {
 }
 
 // ---------------------------------------------------------------------------
+// DELETE /api/runs/{id}
+// ---------------------------------------------------------------------------
+//
+// Removes a single run. The events and detections tables both declare
+// `run_id ... ON DELETE CASCADE`, and foreign keys are enabled in the DSN
+// (see internal/db/db.go), so dependent rows go with it.
+
+func (a *API) handleDeleteRun(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, "invalid run id")
+		return
+	}
+	res, err := a.DB.ExecContext(r.Context(), `DELETE FROM runs WHERE id = ?`, id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "delete: "+err.Error())
+		return
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		writeError(w, http.StatusNotFound, "run not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]int64{"deleted": n})
+}
+
+// ---------------------------------------------------------------------------
+// DELETE /api/runs/unknown
+// ---------------------------------------------------------------------------
+//
+// Bulk-cleanup endpoint for placeholder runs created when the agent posted
+// events without GitHub context (repository = "(unknown)" — see
+// events.go:upsertRun). Useful when the demo runner was started outside a
+// real workflow.
+
+func (a *API) handleDeleteUnknownRuns(w http.ResponseWriter, r *http.Request) {
+	res, err := a.DB.ExecContext(r.Context(),
+		`DELETE FROM runs WHERE repository = '(unknown)'`)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "delete: "+err.Error())
+		return
+	}
+	n, _ := res.RowsAffected()
+	writeJSON(w, http.StatusOK, map[string]int64{"deleted": n})
+}
+
+// ---------------------------------------------------------------------------
 // GET /api/runs/{id}/process-tree
 // ---------------------------------------------------------------------------
 
