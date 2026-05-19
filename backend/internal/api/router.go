@@ -58,6 +58,7 @@ func New(db *sql.DB, logger *slog.Logger) http.Handler {
 		r.Post("/repos/connect", a.handleConnectRepo)
 		r.Delete("/repos/{id}", a.handleDeleteRepo)
 		r.Post("/repos/{id}/refresh", a.handleRefreshRepo)
+		r.Get("/repos/{id}/runner-bootstrap.sh", a.handleRunnerBootstrap)
 	})
 
 	return r

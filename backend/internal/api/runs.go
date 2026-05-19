@@ -206,7 +206,7 @@ func (a *API) handleGetRun(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = rows.Close() }()
 
-	var events []json.RawMessage
+	events := []json.RawMessage{} // never return nil — UI calls .filter() on it
 	for rows.Next() {
 		var payload string
 		if err := rows.Scan(&payload); err != nil {

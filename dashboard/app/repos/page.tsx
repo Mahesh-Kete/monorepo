@@ -92,7 +92,11 @@ function RepoRow({ repo, onChanged }: { repo: ConnectedRepo; onChanged: () => vo
     finally { setBusy(false); }
   };
   const disconnect = async () => {
-    if (!confirm(`Disconnect ${repo.repository}? Existing runs stay in the dashboard but won't refresh from GitHub.`)) return;
+    if (!confirm(
+      `Disconnect ${repo.repository}?\n\n` +
+      `This permanently deletes ALL of its runs, events, and detections ` +
+      `from the dashboard. The repo on GitHub is unaffected.`
+    )) return;
     setBusy(true);
     try { await api.deleteRepo(repo.id); await onChanged(); }
     finally { setBusy(false); }
@@ -177,20 +181,43 @@ function EmptyState({ onAdd }: { onAdd: () => void }) {
   );
 }
 
+type ConnectResult = {
+  authenticated_as: string;
+  workflow_injected: boolean;
+  workflow_message?: string;
+  bootstrap_cmd: string | null;
+};
+
 function ConnectDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () => void }) {
   const [repo, setRepo] = useState("");
   const [token, setToken] = useState("");
   const [note, setNote] = useState("");
   const [err, setErr] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
-  const [okMsg, setOkMsg] = useState<string | null>(null);
+  const [result, setResult] = useState<ConnectResult | null>(null);
 
   const submit = async () => {
-    setErr(null); setOkMsg(null); setSubmitting(true);
+    setErr(null); setResult(null); setSubmitting(true);
     try {
-      const res = await api.connectRepo({ repository: repo.trim(), token: token.trim(), note: note.trim() || undefined });
-      setOkMsg(`Connected as ${res.authenticated_as}. First poll will run within 30 s.`);
-      setTimeout(onSaved, 700);
+      const res = await api.connectRepo({
+        repository: repo.trim(),
+        token: token.trim(),
+        note: note.trim() || undefined,
+      });
+      // Build the absolute one-liner the user pastes in their runner VM.
+      // BACKEND_URL is "" when calls go through the dashboard's rewrite,
+      // so default to window.location.origin for the bootstrap URL too.
+      let bootstrapCmd: string | null = null;
+      if (res.runner_bootstrap_url) {
+        const origin = (typeof window !== "undefined" ? window.location.origin : "");
+        bootstrapCmd = `curl -sSL ${origin}${res.runner_bootstrap_url} | bash`;
+      }
+      setResult({
+        authenticated_as: res.authenticated_as,
+        workflow_injected: res.workflow_injected,
+        workflow_message: res.workflow_message,
+        bootstrap_cmd: bootstrapCmd,
+      });
     } catch (e) {
       setErr(String(e));
     } finally {
@@ -198,71 +225,172 @@ function ConnectDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () 
     }
   };
 
+  // Once the user dismisses the result panel we refresh the list.
+  const done = () => { onSaved(); };
+
   return (
     <div className="fixed inset-0 bg-black/40 flex items-center justify-center z-20" onClick={onClose}>
-      <div className="bg-surface-card border border-surface-line rounded-md shadow-lg p-6 w-full max-w-lg" onClick={(e) => e.stopPropagation()}>
-        <h2 className="text-lg font-semibold mb-1">Connect a GitHub repository</h2>
-        <p className="text-sm text-ink-muted mb-4">
-          Paste a Personal Access Token with <code className="mono">repo</code> scope. Citadel uses it only to read{" "}
-          <code className="mono">/actions/runs</code>; it never stores the token in plaintext outside this server.
-        </p>
+      <div className="bg-surface-card border border-surface-line rounded-md shadow-lg p-6 w-full max-w-xl" onClick={(e) => e.stopPropagation()}>
+        {result ? (
+          <ResultPanel result={result} onDone={done} />
+        ) : (
+          <>
+            <h2 className="text-lg font-semibold mb-1">Connect a GitHub repository</h2>
+            <p className="text-sm text-ink-muted mb-4">
+              Paste a Personal Access Token with <code className="mono">repo</code> scope.
+              Citadel will (1) poll <code className="mono">/actions/runs</code>,
+              (2) commit <code className="mono">.github/workflows/citadel.yml</code>,
+              and (3) hand you a one-liner to register the self-hosted runner.
+              The token is stored only on this server.
+            </p>
 
-        <div className="space-y-3 text-sm">
-          <Field
-            label="Repository"
-            value={repo}
-            setValue={setRepo}
-            placeholder="owner/repo  (e.g. Mahesh-Kete/citadel)"
-          />
-          <Field
-            label="Personal Access Token"
-            value={token}
-            setValue={setToken}
-            placeholder="ghp_… (paste your fine-grained or classic PAT)"
-            type="password"
-          />
-          <Field
-            label="Note (optional)"
-            value={note}
-            setValue={setNote}
-            placeholder="What is this repo? Visible only to you."
-          />
-          <p className="text-xs text-ink-subtle">
-            <a
-              href="https://github.com/settings/tokens/new?scopes=repo&description=Citadel"
-              target="_blank" rel="noopener noreferrer"
-              className="text-brand-600 hover:underline"
-            >
-              Create a token with the right scopes →
-            </a>
+            <div className="space-y-3 text-sm">
+              <Field
+                label="Repository"
+                value={repo}
+                setValue={setRepo}
+                placeholder="owner/repo  (e.g. Mahesh-Kete/citadel)"
+              />
+              <Field
+                label="Personal Access Token"
+                value={token}
+                setValue={setToken}
+                placeholder="ghp_… (paste your fine-grained or classic PAT)"
+                type="password"
+              />
+              <Field
+                label="Note (optional)"
+                value={note}
+                setValue={setNote}
+                placeholder="What is this repo? Visible only to you."
+              />
+              <p className="text-xs text-ink-subtle">
+                <a
+                  href="https://github.com/settings/tokens/new?scopes=repo&description=Citadel"
+                  target="_blank" rel="noopener noreferrer"
+                  className="text-brand-600 hover:underline"
+                >
+                  Create a token with the right scopes →
+                </a>
+              </p>
+              {err && (
+                <div className="rounded border border-block-500/40 bg-block-50 p-2 mono text-block-700 text-xs">
+                  {err}
+                </div>
+              )}
+            </div>
+
+            <div className="flex justify-end gap-2 mt-5">
+              <button
+                onClick={onClose}
+                className="rounded border border-surface-line bg-surface-card px-3 py-1.5 text-ink hover:bg-surface-rail"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={submit}
+                disabled={submitting || !repo || !token}
+                className="rounded bg-brand-600 px-3 py-1.5 text-white hover:bg-brand-700 disabled:opacity-50"
+              >
+                {submitting ? "Connecting…" : "Connect"}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// copyText tries the Clipboard API first (only works on HTTPS/localhost), then
+// falls back to the legacy execCommand path so plain-HTTP dashboards still work.
+async function copyText(text: string): Promise<boolean> {
+  try {
+    if (navigator.clipboard && window.isSecureContext) {
+      await navigator.clipboard.writeText(text);
+      return true;
+    }
+  } catch { /* fall through */ }
+  try {
+    const ta = document.createElement("textarea");
+    ta.value = text;
+    ta.setAttribute("readonly", "");
+    ta.style.position = "fixed";
+    ta.style.top = "0";
+    ta.style.left = "0";
+    ta.style.opacity = "0";
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    ta.setSelectionRange(0, text.length);
+    const ok = document.execCommand("copy");
+    document.body.removeChild(ta);
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
+function ResultPanel({ result, onDone }: { result: ConnectResult; onDone: () => void }) {
+  const [copied, setCopied] = useState(false);
+  const [copyErr, setCopyErr] = useState(false);
+  const copy = async () => {
+    if (!result.bootstrap_cmd) return;
+    const ok = await copyText(result.bootstrap_cmd);
+    if (ok) {
+      setCopied(true);
+      setCopyErr(false);
+      setTimeout(() => setCopied(false), 1500);
+    } else {
+      setCopyErr(true);
+      setTimeout(() => setCopyErr(false), 2500);
+    }
+  };
+
+  return (
+    <div>
+      <h2 className="text-lg font-semibold mb-1 flex items-center gap-2">
+        <CheckCircle2 className="h-5 w-5 text-ok-600" />
+        Connected as <span className="mono">{result.authenticated_as}</span>
+      </h2>
+      <p className="text-sm text-ink-muted mb-4">
+        {result.workflow_injected
+          ? `Workflow committed: ${result.workflow_message ?? ".github/workflows/citadel.yml"}.`
+          : `Workflow status: ${result.workflow_message ?? "skipped (already exists or non-fatal error)"}.`}
+      </p>
+
+      {result.bootstrap_cmd && (
+        <div className="rounded border border-brand-500/40 bg-brand-50/40 p-3 mb-4">
+          <div className="text-xs uppercase tracking-wide text-brand-700 mb-1.5 font-medium">
+            One-time runner setup — paste this in your runner VM
+          </div>
+          <p className="text-xs text-ink-muted mb-2">
+            Run this once on the machine that should execute CI jobs (skip if
+            you already set up a runner for another repo on the same VM —
+            future repos pick up the existing one automatically).
           </p>
-          {err && (
-            <div className="rounded border border-block-500/40 bg-block-50 p-2 mono text-block-700 text-xs">
-              {err}
-            </div>
-          )}
-          {okMsg && (
-            <div className="rounded border border-ok-500/40 bg-ok-50 p-2 text-ok-700 text-xs">
-              {okMsg}
-            </div>
-          )}
+          <div className="flex items-stretch gap-2">
+            <pre className="flex-1 rounded border border-surface-line bg-surface-card px-3 py-2 text-xs mono overflow-x-auto whitespace-nowrap">
+              {result.bootstrap_cmd}
+            </pre>
+            <button
+              onClick={copy}
+              className="rounded border border-surface-line bg-surface-card px-2.5 text-xs hover:bg-brand-50 whitespace-nowrap"
+              title={copyErr ? "Copy failed — select the command manually" : "Copy to clipboard"}
+            >
+              {copyErr ? "Failed" : copied ? "Copied" : "Copy"}
+            </button>
+          </div>
         </div>
+      )}
 
-        <div className="flex justify-end gap-2 mt-5">
-          <button
-            onClick={onClose}
-            className="rounded border border-surface-line bg-surface-card px-3 py-1.5 text-ink hover:bg-surface-rail"
-          >
-            Cancel
-          </button>
-          <button
-            onClick={submit}
-            disabled={submitting || !repo || !token}
-            className="rounded bg-brand-600 px-3 py-1.5 text-white hover:bg-brand-700 disabled:opacity-50"
-          >
-            {submitting ? "Connecting…" : "Connect"}
-          </button>
-        </div>
+      <div className="flex justify-end">
+        <button
+          onClick={onDone}
+          className="rounded bg-brand-600 px-3 py-1.5 text-white hover:bg-brand-700"
+        >
+          Done
+        </button>
       </div>
     </div>
   );

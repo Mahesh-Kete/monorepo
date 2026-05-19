@@ -44,7 +44,15 @@ export const api = {
   // --- Phase 11: Connect repo ---
   listRepos: () => fetchJSON<ConnectedRepo[]>(`/api/repos`),
   connectRepo: (body: { repository: string; token: string; note?: string }) =>
-    fetchJSON<{ repository: string; authenticated_as: string }>(`/api/repos/connect`, {
+    fetchJSON<{
+      repository: string;
+      authenticated_as: string;
+      workflow_injected: boolean;
+      workflow_message?: string;
+      workflow_url?: string;
+      repo_id?: number;
+      runner_bootstrap_url?: string;
+    }>(`/api/repos/connect`, {
       method: "POST",
       body: JSON.stringify(body),
     }),
