@@ -34,6 +34,9 @@ export const api = {
   listDetections: (since?: string) =>
     fetchJSON<DetectionRow[]>(`/api/detections${since ? `?since=${encodeURIComponent(since)}` : ""}`),
   listPolicies: () => fetchJSON<Policy[]>("/api/policies"),
+  getPolicy: (id: number) => fetchJSON<Policy>(`/api/policies/${id}`),
+  deletePolicy: (id: number) =>
+    fetchJSON<{ deleted: number }>(`/api/policies/${id}`, { method: "DELETE" }),
   createPolicy: (p: Omit<Policy, "id" | "updated_at">) =>
     fetchJSON<{ id: number }>("/api/policies", {
       method: "POST",

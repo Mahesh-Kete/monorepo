@@ -53,6 +53,8 @@ func New(db *sql.DB, logger *slog.Logger) http.Handler {
 		r.Get("/policies", a.handleListPolicies)
 		r.Post("/policies", a.handleCreatePolicy)
 		r.Get("/policies/applicable", a.handleApplicablePolicy)
+		r.Get("/policies/{id}", a.handleGetPolicy)
+		r.Delete("/policies/{id}", a.handleDeletePolicy)
 
 		r.Get("/repos", a.handleListRepos)
 		r.Post("/repos/connect", a.handleConnectRepo)

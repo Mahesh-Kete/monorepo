@@ -6,6 +6,8 @@ import (
 	"errors"
 	"net/http"
 	"time"
+
+	"github.com/go-chi/chi/v5"
 )
 
 // policy is the JSON shape used for create/list responses. allowlist and
@@ -114,6 +116,53 @@ func (a *API) handleCreatePolicy(w http.ResponseWriter, r *http.Request) {
 	}
 	id, _ := res.LastInsertId()
 	writeJSON(w, http.StatusCreated, map[string]int64{"id": id})
+}
+
+// ---------------------------------------------------------------------------
+// GET /api/policies/{id}
+// ---------------------------------------------------------------------------
+
+func (a *API) handleGetPolicy(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	var p policy
+	var allowlist, rules string
+	err := a.DB.QueryRowContext(r.Context(), `
+		SELECT id, name, COALESCE(scope_repo, ''), COALESCE(scope_workflow, ''),
+		       mode, COALESCE(allowlist, '[]'), COALESCE(detection_rules, '{}'),
+		       updated_at
+		FROM policies WHERE id = ?`, id).Scan(
+		&p.ID, &p.Name, &p.ScopeRepo, &p.ScopeWorkflow,
+		&p.Mode, &allowlist, &rules, &p.UpdatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "policy not found")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "query: "+err.Error())
+		return
+	}
+	p.Allowlist = json.RawMessage(allowlist)
+	p.DetectionRules = json.RawMessage(rules)
+	writeJSON(w, http.StatusOK, p)
+}
+
+// ---------------------------------------------------------------------------
+// DELETE /api/policies/{id}
+// ---------------------------------------------------------------------------
+
+func (a *API) handleDeletePolicy(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	res, err := a.DB.ExecContext(r.Context(), `DELETE FROM policies WHERE id = ?`, id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "delete: "+err.Error())
+		return
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		writeError(w, http.StatusNotFound, "policy not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]int64{"deleted": n})
 }
 
 // ---------------------------------------------------------------------------
