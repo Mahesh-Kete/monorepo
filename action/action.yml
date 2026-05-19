@@ -116,10 +116,15 @@ runs:
         if [ -z "$WATCH_PATH" ]; then
           WATCH_PATH="$GITHUB_WORKSPACE"
         fi
+        # debugfs + tracefs are required for tracepoint attach. They live on
+        # the host kernel; we bind-mount them into the container because
+        # --privileged alone doesn't make them visible.
         docker run -d \
           --name "${{ inputs.container-name }}" \
           --privileged --pid=host --network=host \
           -v /sys/fs/cgroup:/sys/fs/cgroup \
+          -v /sys/kernel/debug:/sys/kernel/debug \
+          -v /sys/kernel/tracing:/sys/kernel/tracing \
           -v /tmp:/tmp \
           -v "$WATCH_PATH":"$WATCH_PATH" \
           "${{ steps.img.outputs.ref }}" \
