@@ -23,6 +23,7 @@ import (
 	"io"
 	"log/slog"
 	"net"
+	neturl "net/url"
 	"os"
 	"os/signal"
 	"syscall"
@@ -102,10 +103,16 @@ func cmdRun(args []string) int {
 	if *mode != "" {
 		pol.Mode = *mode
 	}
+	// Forward-resolve the allowlist so block-mode decisions can be made on
+	// IP set membership instead of fragile reverse-DNS comparison. We seed
+	// the backend host so the agent doesn't block its own egress.
+	pol.ResolveAllowlist(ctx, logger, []string{backendHostFromURL(*backendURL)})
+
 	polWatcher := policy.NewWatcher(pol)
 	logger.Info("policy loaded",
 		"name", pol.Name, "mode", pol.Mode,
 		"allowed_domains", len(pol.AllowedDomains),
+		"allowed_ips", len(pol.AllowedIPSet),
 		"detection_actions", len(pol.DetectionActions))
 
 	// --- Backend client (or local-dev stdout streaming) ---
@@ -179,8 +186,11 @@ func cmdRun(args []string) int {
 			if *mode != "" {
 				newPol.Mode = *mode
 			}
+			newPol.ResolveAllowlist(ctx, logger, []string{backendHostFromURL(*backendURL)})
 			polWatcher.Set(newPol)
-			logger.Info("policy reloaded", "name", newPol.Name, "mode", newPol.Mode)
+			logger.Info("policy reloaded",
+				"name", newPol.Name, "mode", newPol.Mode,
+				"allowed_ips", len(newPol.AllowedIPSet))
 		}
 	}()
 
@@ -220,10 +230,11 @@ func cmdRun(args []string) int {
 			e.Hostname = dnsCache.Lookup(e.DstIP)
 			e.ProcessChain = tree.AncestryComms(e.PID)
 
-			// In block mode: if the destination domain isn't allow-listed,
-			// add the IP to the kernel block map so subsequent packets to
-			// it get dropped.
-			if bp != nil && polWatcher.Get().ShouldBlockDomain(e.Hostname) {
+			// In block mode: if the destination IP isn't in the pre-resolved
+			// allowlist, add it to the kernel block map so subsequent packets
+			// to it get dropped. The first SYN may have escaped (kprobe latency),
+			// but the rest of the connection won't carry payload.
+			if bp != nil && polWatcher.Get().ShouldBlockIP(e.DstIP) {
 				if err := bp.Block(e.DstIP); err != nil {
 					logger.Warn("block ip", "ip", e.DstIP, "err", err)
 				} else {
@@ -351,4 +362,18 @@ func cmdDiff(args []string) int {
 	}
 	fmt.Fprintf(os.Stderr, "diff: %d changes\n", len(diffs))
 	return 0
+}
+
+
+// backendHostFromURL extracts the host portion of the backend URL ("http://x:8080" → "x")
+// so we can add its resolved IPs to the policy allowlist. Falls back to empty
+// string if the URL is unparseable, in which case the agent still works but
+// might block its own traffic if the backend host name isn't already in the
+// allowlist.
+func backendHostFromURL(s string) string {
+	u, err := neturl.Parse(s)
+	if err != nil {
+		return ""
+	}
+	return u.Hostname()
 }

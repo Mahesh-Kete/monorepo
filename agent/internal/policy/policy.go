@@ -14,6 +14,8 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log/slog"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -23,10 +25,75 @@ import (
 // Policy is the in-memory view of the active policy for this run.
 type Policy struct {
 	Name             string
-	Mode             string                       // "audit" | "block"
-	AllowedDomains   []string                     // raw entries; matched with glob support
-	AllowedIPs       []string                     // exact IPv4/v6 strings
-	DetectionActions map[string]string            // rule_name -> "kill"|"fail"|""
+	Mode             string            // "audit" | "block"
+	AllowedDomains   []string          // raw entries; matched with glob support
+	AllowedIPs       []string          // exact IPv4/v6 strings from the policy itself
+	DetectionActions map[string]string // rule_name -> "kill"|"fail"|""
+
+	// AllowedIPSet is populated by ResolveAllowlist (called at agent startup
+	// and on policy reload). Block-mode decisions check this set: any
+	// outbound connect whose destination IP is *not* in here is dropped.
+	// Pre-resolution sidesteps the reverse-DNS roundtrip — which is unreliable
+	// for cloud-hosted destinations whose PTR records don't roundtrip with the
+	// forward A records — and lets us block the first packet, not just the
+	// retransmits.
+	AllowedIPSet map[string]struct{}
+}
+
+// ResolveAllowlist forward-resolves every entry in AllowedDomains, plus any
+// literal AllowedIPs, plus a few baseline pinned IPs (loopback, the supplied
+// extraHosts) and stores the union in AllowedIPSet. Lookup failures are
+// logged and skipped.
+func (p *Policy) ResolveAllowlist(ctx context.Context, log *slog.Logger, extraHosts []string) {
+	if p == nil {
+		return
+	}
+	p.AllowedIPSet = make(map[string]struct{}, 64)
+	// Always allow loopback so the agent can reach its own backend.
+	for _, ip := range []string{"127.0.0.1", "::1"} {
+		p.AllowedIPSet[ip] = struct{}{}
+	}
+	for _, ip := range p.AllowedIPs {
+		p.AllowedIPSet[ip] = struct{}{}
+	}
+	domains := append([]string{}, p.AllowedDomains...)
+	domains = append(domains, extraHosts...)
+	r := net.DefaultResolver
+	c, cancel := context.WithTimeout(ctx, 8*time.Second)
+	defer cancel()
+	for _, d := range domains {
+		d = strings.TrimSpace(d)
+		if d == "" || strings.HasPrefix(d, "*.") {
+			continue // wildcard domains can't be forward-resolved.
+		}
+		ips, err := r.LookupIPAddr(c, d)
+		if err != nil {
+			if log != nil {
+				log.Warn("resolve allowlist domain", "domain", d, "err", err)
+			}
+			continue
+		}
+		for _, ip := range ips {
+			p.AllowedIPSet[ip.IP.String()] = struct{}{}
+		}
+	}
+	if log != nil {
+		log.Info("allowlist resolved",
+			"domains", len(domains), "ips", len(p.AllowedIPSet))
+	}
+}
+
+// ShouldBlockIP returns true iff we're in block mode and the destination IP
+// is not in the pre-resolved AllowedIPSet. Loopback addresses are always
+// allowed (seeded by ResolveAllowlist).
+func (p *Policy) ShouldBlockIP(ip net.IP) bool {
+	if p == nil || p.Mode != "block" || ip == nil {
+		return false
+	}
+	if _, ok := p.AllowedIPSet[ip.String()]; ok {
+		return false
+	}
+	return true
 }
 
 // backendPolicy matches the JSON returned by GET /api/policies/applicable.
