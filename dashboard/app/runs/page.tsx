@@ -1,11 +1,13 @@
 "use client";
 
 import Link from "next/link";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { GitBranch, Search, RefreshCw, Shield } from "lucide-react";
 import { api } from "@/lib/api";
 import type { RunSummary } from "@/lib/types";
 import { JobStatusDot, ModeBadge, SeverityBadge } from "@/components/badges";
+import { LiveIndicator } from "@/components/live-indicator";
+import { useLivePoll } from "@/lib/use-live-poll";
 
 function relativeTime(iso: string): string {
   const diff = Math.max(0, Date.now() - new Date(iso).getTime());
@@ -17,23 +19,12 @@ function relativeTime(iso: string): string {
 }
 
 export default function RunsPage() {
-  const [runs, setRuns] = useState<RunSummary[] | null>(null);
-  const [err, setErr] = useState<string | null>(null);
-  const [refreshing, setRefreshing] = useState(false);
+  const { data: runs, error: err, updatedAt, refetch } = useLivePoll<RunSummary[]>(
+    () => api.listRuns(50),
+    3000,
+  );
   const [filter, setFilter] = useState("");
-
-  const load = async () => {
-    setRefreshing(true);
-    try {
-      setRuns(await api.listRuns(50));
-      setErr(null);
-    } catch (e) {
-      setErr(String(e));
-    } finally {
-      setRefreshing(false);
-    }
-  };
-  useEffect(() => { load(); }, []);
+  const [manualRefresh, setManualRefresh] = useState(false);
 
   const filtered = useMemo(() => {
     if (!runs) return null;
@@ -46,16 +37,27 @@ export default function RunsPage() {
     );
   }, [runs, filter]);
 
+  const onRefresh = async () => {
+    setManualRefresh(true);
+    try { await refetch(); } finally {
+      // small delay so the spin animation reads
+      setTimeout(() => setManualRefresh(false), 300);
+    }
+  };
+
   return (
     <div>
       <div className="flex items-center justify-between mb-4">
-        <h1 className="text-xl font-semibold tracking-tight">Workflow runs</h1>
+        <div className="flex items-baseline gap-3">
+          <h1 className="text-xl font-semibold tracking-tight">Workflow runs</h1>
+          <LiveIndicator updatedAt={updatedAt} />
+        </div>
         <button
-          onClick={load}
-          disabled={refreshing}
+          onClick={onRefresh}
+          disabled={manualRefresh}
           className="inline-flex items-center gap-1.5 rounded border border-surface-line bg-surface-card px-3 py-1.5 text-sm hover:bg-brand-50 hover:border-brand-200 disabled:opacity-50"
         >
-          <RefreshCw className={`h-4 w-4 ${refreshing ? "animate-spin" : ""}`} />
+          <RefreshCw className={`h-4 w-4 ${manualRefresh ? "animate-spin" : ""}`} />
           Refresh
         </button>
       </div>
@@ -100,6 +102,7 @@ export default function RunsPage() {
                 <Th>Run</Th>
                 <Th>Commit</Th>
                 <Th>Mode</Th>
+                <Th>Citadel</Th>
                 <Th>Events</Th>
                 <Th>Detections</Th>
                 <Th>Started</Th>
@@ -110,8 +113,10 @@ export default function RunsPage() {
                 <tr key={r.id} className="hover:bg-brand-50/40 transition-colors">
                   <Td>
                     <span className="inline-flex items-center gap-1.5">
-                      <JobStatusDot status={r.status} />
-                      <span className="text-xs text-ink-muted capitalize">{r.status.replace("_", " ")}</span>
+                      <JobStatusDot status={r.gh_status || r.status} />
+                      <span className="text-xs text-ink-muted capitalize">
+                        {(r.gh_conclusion || r.gh_status || r.status).replace("_", " ")}
+                      </span>
                     </span>
                   </Td>
                   <Td>
@@ -130,6 +135,17 @@ export default function RunsPage() {
                     ) : "—"}
                   </Td>
                   <Td><ModeBadge mode={r.policy_mode} /></Td>
+                  <Td>
+                    {r.agent_seen ? (
+                      <span className="inline-flex items-center gap-1 rounded border border-ok-500/30 bg-ok-50 px-1.5 py-0.5 text-[10px] font-medium text-ok-700 uppercase">
+                        Citadel
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center gap-1 rounded border border-surface-line bg-surface-rail px-1.5 py-0.5 text-[10px] font-medium text-ink-subtle uppercase">
+                        Agent not installed
+                      </span>
+                    )}
+                  </Td>
                   <Td>
                     <div className="flex items-center gap-2 mono text-xs text-ink-muted">
                       <span title="network">🌐 {r.event_counts.network}</span>

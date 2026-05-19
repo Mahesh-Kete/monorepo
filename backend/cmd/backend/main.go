@@ -19,6 +19,7 @@ import (
 
 	"github.com/Mahesh-Kete/citadel/backend/internal/api"
 	"github.com/Mahesh-Kete/citadel/backend/internal/db"
+	gh "github.com/Mahesh-Kete/citadel/backend/internal/github"
 )
 
 func main() {
@@ -44,6 +45,14 @@ func main() {
 	defer func() { _ = database.Close() }()
 
 	handler := api.New(database, logger)
+
+	// Background poller for the "Connect repo" feature — every 30 s for each
+	// row in connected_repos, fetches recent workflow runs from the GitHub
+	// Actions API and upserts them into the runs table.
+	poller := gh.NewPoller(database, logger)
+	pollerCtx, cancelPoller := context.WithCancel(context.Background())
+	defer cancelPoller()
+	poller.Start(pollerCtx)
 
 	srv := &http.Server{
 		Addr:              *addr,

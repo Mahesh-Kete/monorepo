@@ -13,21 +13,36 @@ import (
 )
 
 // runSummary is the shape returned by GET /api/runs.
+//
+// Fields prefixed gh_* are populated from the GitHub Actions API by
+// /internal/github/poller.go (Phase 11 / "Connect repo" feature). AgentSeen
+// is true once at least one event has been ingested from the Citadel agent
+// for this run — used by the dashboard to render a "Citadel coverage" badge.
 type runSummary struct {
-	ID            int64             `json:"id"`
-	Repository    string            `json:"repository"`
-	Workflow      string            `json:"workflow,omitempty"`
-	RunID         string            `json:"run_id"`
-	RunNumber     string            `json:"run_number,omitempty"`
-	SHA           string            `json:"sha,omitempty"`
-	Ref           string            `json:"ref,omitempty"`
-	Actor         string            `json:"actor,omitempty"`
-	StartedAt     time.Time         `json:"started_at"`
-	PolicyMode    string            `json:"policy_mode"`
-	Status        string            `json:"status"`
-	EventCounts   map[string]int    `json:"event_counts"`
-	DetectionCnt  int               `json:"detection_count"`
-	SeverityMax   string            `json:"severity_max,omitempty"`
+	ID           int64          `json:"id"`
+	Repository   string         `json:"repository"`
+	Workflow     string         `json:"workflow,omitempty"`
+	RunID        string         `json:"run_id"`
+	RunNumber    string         `json:"run_number,omitempty"`
+	SHA          string         `json:"sha,omitempty"`
+	Ref          string         `json:"ref,omitempty"`
+	Actor        string         `json:"actor,omitempty"`
+	StartedAt    time.Time      `json:"started_at"`
+	PolicyMode   string         `json:"policy_mode"`
+	Status       string         `json:"status"`
+	EventCounts  map[string]int `json:"event_counts"`
+	DetectionCnt int            `json:"detection_count"`
+	SeverityMax  string         `json:"severity_max,omitempty"`
+
+	// GitHub Actions metadata (Phase 11 "Connect repo")
+	GHStatus       string  `json:"gh_status,omitempty"`     // queued | in_progress | completed
+	GHConclusion   string  `json:"gh_conclusion,omitempty"` // success | failure | cancelled | …
+	GHHTMLURL      string  `json:"gh_html_url,omitempty"`
+	GHDurationSec  int     `json:"gh_duration_sec,omitempty"`
+	GHEventName    string  `json:"gh_event_name,omitempty"`
+	GHHeadBranch   string  `json:"gh_head_branch,omitempty"`
+	GHSyncedAt     *time.Time `json:"gh_synced_at,omitempty"`
+	AgentSeen      bool    `json:"agent_seen"`
 }
 
 // runDetail is the shape returned by GET /api/runs/:id.
@@ -54,6 +69,10 @@ func (a *API) handleListRuns(w http.ResponseWriter, r *http.Request) {
 			r.id, r.repository, COALESCE(r.workflow, ''), r.run_id,
 			COALESCE(r.run_number, ''), COALESCE(r.sha, ''), COALESCE(r.ref, ''),
 			COALESCE(r.actor, ''), r.started_at, r.policy_mode, r.status,
+			COALESCE(r.gh_status, ''), COALESCE(r.gh_conclusion, ''),
+			COALESCE(r.gh_html_url, ''), COALESCE(r.gh_duration_sec, 0),
+			COALESCE(r.gh_event_name, ''), COALESCE(r.gh_head_branch, ''),
+			r.gh_synced_at, COALESCE(r.agent_seen, 0),
 			(SELECT COUNT(*) FROM events WHERE run_id = r.id AND type = 'network') AS net_count,
 			(SELECT COUNT(*) FROM events WHERE run_id = r.id AND type = 'process') AS proc_count,
 			(SELECT COUNT(*) FROM events WHERE run_id = r.id AND type = 'file') AS file_count,
@@ -78,16 +97,25 @@ func (a *API) handleListRuns(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var s runSummary
 		var net, proc, file, tamper int
+		var synced sql.NullTime
+		var agentSeen int
 		if err := rows.Scan(
 			&s.ID, &s.Repository, &s.Workflow, &s.RunID,
 			&s.RunNumber, &s.SHA, &s.Ref, &s.Actor,
 			&s.StartedAt, &s.PolicyMode, &s.Status,
+			&s.GHStatus, &s.GHConclusion, &s.GHHTMLURL, &s.GHDurationSec,
+			&s.GHEventName, &s.GHHeadBranch, &synced, &agentSeen,
 			&net, &proc, &file, &tamper,
 			&s.DetectionCnt, &s.SeverityMax,
 		); err != nil {
 			writeError(w, http.StatusInternalServerError, "scan: "+err.Error())
 			return
 		}
+		if synced.Valid {
+			t := synced.Time
+			s.GHSyncedAt = &t
+		}
+		s.AgentSeen = agentSeen != 0
 		s.EventCounts = map[string]int{
 			"network":     net,
 			"process":     proc,
@@ -113,11 +141,17 @@ func (a *API) handleGetRun(w http.ResponseWriter, r *http.Request) {
 	// Header row.
 	var s runSummary
 	var net, proc, file, tamper int
+	var synced sql.NullTime
+	var agentSeen int
 	err = a.DB.QueryRowContext(r.Context(), `
 		SELECT
 			r.id, r.repository, COALESCE(r.workflow, ''), r.run_id,
 			COALESCE(r.run_number, ''), COALESCE(r.sha, ''), COALESCE(r.ref, ''),
 			COALESCE(r.actor, ''), r.started_at, r.policy_mode, r.status,
+			COALESCE(r.gh_status, ''), COALESCE(r.gh_conclusion, ''),
+			COALESCE(r.gh_html_url, ''), COALESCE(r.gh_duration_sec, 0),
+			COALESCE(r.gh_event_name, ''), COALESCE(r.gh_head_branch, ''),
+			r.gh_synced_at, COALESCE(r.agent_seen, 0),
 			(SELECT COUNT(*) FROM events WHERE run_id = r.id AND type = 'network'),
 			(SELECT COUNT(*) FROM events WHERE run_id = r.id AND type = 'process'),
 			(SELECT COUNT(*) FROM events WHERE run_id = r.id AND type = 'file'),
@@ -133,6 +167,8 @@ func (a *API) handleGetRun(w http.ResponseWriter, r *http.Request) {
 		&s.ID, &s.Repository, &s.Workflow, &s.RunID,
 		&s.RunNumber, &s.SHA, &s.Ref, &s.Actor,
 		&s.StartedAt, &s.PolicyMode, &s.Status,
+		&s.GHStatus, &s.GHConclusion, &s.GHHTMLURL, &s.GHDurationSec,
+		&s.GHEventName, &s.GHHeadBranch, &synced, &agentSeen,
 		&net, &proc, &file, &tamper,
 		&s.DetectionCnt, &s.SeverityMax,
 	)
@@ -144,6 +180,11 @@ func (a *API) handleGetRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "query run: "+err.Error())
 		return
 	}
+	if synced.Valid {
+		t := synced.Time
+		s.GHSyncedAt = &t
+	}
+	s.AgentSeen = agentSeen != 0
 	s.EventCounts = map[string]int{
 		"network": net, "process": proc, "file": file, "file_tamper": tamper,
 	}

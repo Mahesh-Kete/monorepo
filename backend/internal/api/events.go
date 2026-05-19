@@ -220,9 +220,14 @@ func insertEvent(ctx context.Context, tx *sql.Tx, runID int64, e incomingEvent, 
 		b, _ := json.Marshal(e.ProcessChain)
 		processChain = string(b)
 	}
-	_, err := tx.ExecContext(ctx, `
+	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO events (run_id, type, timestamp, payload, process_chain, step)
 		VALUES (?, ?, ?, ?, ?, ?)`,
-		runID, e.Type, e.Timestamp, string(raw), processChain, e.Workflow.Step)
+		runID, e.Type, e.Timestamp, string(raw), processChain, e.Workflow.Step); err != nil {
+		return err
+	}
+	// Mark the run as "Citadel agent observed it" — dashboard's Citadel
+	// coverage badge keys off this.
+	_, err := tx.ExecContext(ctx, `UPDATE runs SET agent_seen=1 WHERE id=? AND agent_seen=0`, runID)
 	return err
 }

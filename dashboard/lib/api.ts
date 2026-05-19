@@ -2,7 +2,7 @@
 //
 // All calls happen client-side from the browser, so they use NEXT_PUBLIC_BACKEND_URL.
 
-import type { DetectionRow, Policy, RunDetail, RunSummary } from "./types";
+import type { ConnectedRepo, DetectionRow, Policy, RunDetail, RunSummary } from "./types";
 
 export const BACKEND_URL =
   process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8080";
@@ -38,6 +38,17 @@ export const api = {
     }),
   applicablePolicy: (repo: string, workflow: string) =>
     fetchJSON<Policy>(`/api/policies/applicable?repo=${encodeURIComponent(repo)}&workflow=${encodeURIComponent(workflow)}`),
+  // --- Phase 11: Connect repo ---
+  listRepos: () => fetchJSON<ConnectedRepo[]>(`/api/repos`),
+  connectRepo: (body: { repository: string; token: string; note?: string }) =>
+    fetchJSON<{ repository: string; authenticated_as: string }>(`/api/repos/connect`, {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  deleteRepo: (id: number) =>
+    fetchJSON<{ deleted: number }>(`/api/repos/${id}`, { method: "DELETE" }),
+  refreshRepo: (id: number) =>
+    fetchJSON<{ fetched: number }>(`/api/repos/${id}/refresh`, { method: "POST" }),
 };
 
 export interface ProcessTreeNode {

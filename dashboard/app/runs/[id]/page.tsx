@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useParams } from "next/navigation";
 import {
   Globe2, FileText, Cpu, LayoutDashboard, BookOpen,
@@ -11,6 +11,8 @@ import type { CitadelEvent, DetectionRow, RunDetail } from "@/lib/types";
 import {
   JobStatusDot, ModeBadge, SeverityBadge, StatusPill,
 } from "@/components/badges";
+import { LiveIndicator } from "@/components/live-indicator";
+import { useLivePoll } from "@/lib/use-live-poll";
 
 type Tab = "summary" | "network" | "files" | "processes" | "recommendations";
 
@@ -25,18 +27,20 @@ const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
 export default function RunDetailPage() {
   const params = useParams<{ id: string }>();
   const runId = Number(params.id);
-
-  const [data, setData] = useState<RunDetail | null>(null);
-  const [tree, setTree] = useState<ProcessTreeNode[] | null>(null);
   const [tab, setTab] = useState<Tab>("summary");
-  const [err, setErr] = useState<string | null>(null);
 
-  useEffect(() => {
-    if (!runId) return;
-    Promise.all([api.getRun(runId), api.getProcessTree(runId)])
-      .then(([d, t]) => { setData(d); setTree(t); })
-      .catch((e) => setErr(String(e)));
-  }, [runId]);
+  // Poll run detail every 2s (events + detections refresh as the workflow runs).
+  // Process tree polls every 5s (changes less frequently).
+  const { data, error: err, updatedAt } = useLivePoll<RunDetail>(
+    () => api.getRun(runId),
+    2000,
+    !!runId,
+  );
+  const { data: tree } = useLivePoll<ProcessTreeNode[]>(
+    () => api.getProcessTree(runId),
+    5000,
+    !!runId,
+  );
 
   if (err) return <ErrorBox msg={err} />;
   if (!data) return <div className="text-ink-subtle">Loading…</div>;
@@ -46,6 +50,9 @@ export default function RunDetailPage() {
 
   return (
     <div>
+      <div className="mb-3 flex items-center justify-end">
+        <LiveIndicator updatedAt={updatedAt} />
+      </div>
       <RunHeader run={run} />
 
       {/* Two-column: left job rail + main content */}

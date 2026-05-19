@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { useEffect, useState } from "react";
-import { Shield, Activity, Lock } from "lucide-react";
+import { Shield, Activity, Lock, FolderGit2 } from "lucide-react";
 import { api } from "@/lib/api";
 import { ThemeToggle } from "./theme-toggle";
 
@@ -39,6 +39,7 @@ export function Navbar() {
         </Link>
         <nav className="flex items-center gap-1 text-sm">
           <NavLink href="/runs"><Activity className="h-4 w-4" /> Runs</NavLink>
+          <NavLink href="/repos"><FolderGit2 className="h-4 w-4" /> Repos</NavLink>
           <NavLink href="/policies"><Lock className="h-4 w-4" /> Policies</NavLink>
         </nav>
         <div className="ml-auto flex items-center gap-3 text-xs text-ink-muted">

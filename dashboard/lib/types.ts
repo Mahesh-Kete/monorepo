@@ -72,6 +72,24 @@ export interface RunSummary {
   event_counts: { network: number; process: number; file: number; file_tamper: number };
   detection_count: number;
   severity_max?: string;
+  // Populated by the GitHub Actions poller (Phase 11 "Connect repo")
+  gh_status?: string;       // queued | in_progress | completed
+  gh_conclusion?: string;   // success | failure | cancelled | …
+  gh_html_url?: string;
+  gh_duration_sec?: number;
+  gh_event_name?: string;
+  gh_head_branch?: string;
+  gh_synced_at?: string;
+  agent_seen: boolean;      // true iff Citadel agent ingested any events
+}
+
+export interface ConnectedRepo {
+  id: number;
+  repository: string;
+  note?: string;
+  created_at: string;
+  last_polled_at?: string;
+  last_error?: string;
 }
 
 export interface DetectionRow {
