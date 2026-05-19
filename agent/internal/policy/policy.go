@@ -30,14 +30,43 @@ type Policy struct {
 }
 
 // backendPolicy matches the JSON returned by GET /api/policies/applicable.
+//
+// DetectionRules is intentionally a permissive shape (RawMessage values) so
+// the agent decodes both the legacy schema ({rule: "kill"}) and the richer
+// dashboard schema ({rule: {enabled, severity, ...}}). The agent only cares
+// about the action keyword when present; configuration knobs the detector
+// uses are ignored here.
 type backendPolicy struct {
-	ID             int64             `json:"id"`
-	Name           string            `json:"name"`
-	ScopeRepo      string            `json:"scope_repo,omitempty"`
-	ScopeWorkflow  string            `json:"scope_workflow,omitempty"`
-	Mode           string            `json:"mode"`
-	Allowlist      []string          `json:"allowlist"`
-	DetectionRules map[string]string `json:"detection_rules"`
+	ID             int64                      `json:"id"`
+	Name           string                     `json:"name"`
+	ScopeRepo      string                     `json:"scope_repo,omitempty"`
+	ScopeWorkflow  string                     `json:"scope_workflow,omitempty"`
+	Mode           string                     `json:"mode"`
+	Allowlist      []string                   `json:"allowlist"`
+	DetectionRules map[string]json.RawMessage `json:"detection_rules"`
+}
+
+// extractActions normalises whatever shape the backend served into the simple
+// rule_name -> action_string map the agent uses for kill/fail decisions.
+// Unknown shapes safely yield an empty string (= no enforcement action).
+func extractActions(raw map[string]json.RawMessage) map[string]string {
+	out := make(map[string]string, len(raw))
+	for rule, msg := range raw {
+		var s string
+		if err := json.Unmarshal(msg, &s); err == nil {
+			out[rule] = s
+			continue
+		}
+		var obj struct {
+			Action string `json:"action"`
+		}
+		if err := json.Unmarshal(msg, &obj); err == nil {
+			out[rule] = obj.Action
+			continue
+		}
+		out[rule] = ""
+	}
+	return out
 }
 
 // Default returns the permissive audit-mode default. Used when the backend
@@ -83,7 +112,7 @@ func LoadFromBackend(ctx context.Context, backendURL, repo, workflow string) (*P
 		Name:             bp.Name,
 		Mode:             bp.Mode,
 		AllowedDomains:   bp.Allowlist,
-		DetectionActions: bp.DetectionRules,
+		DetectionActions: extractActions(bp.DetectionRules),
 	}
 	if out.Mode == "" {
 		out.Mode = "audit"

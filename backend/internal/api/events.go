@@ -71,12 +71,21 @@ func (a *API) handlePostEvents(w http.ResponseWriter, r *http.Request) {
 	}
 	defer func() { _ = tx.Rollback() }() // no-op if Commit succeeded
 
-	accepted := 0
+	accepted, dropped := 0, 0
 	for i, raw := range req.Events {
 		var typed incomingEvent
 		if err := json.Unmarshal(raw, &typed); err != nil {
 			writeError(w, http.StatusBadRequest, fmt.Sprintf("event[%d] invalid: %v", i, err))
 			return
+		}
+		// Drop events with no GitHub workflow context. They almost always
+		// come from a stray agent running on the runner host outside any
+		// workflow — landing them in an "(unknown)" run pollutes the UI and
+		// hides real findings. The action wrapper always sets `repository`
+		// for legit workflow events.
+		if typed.Workflow.Repository == "" {
+			dropped++
+			continue
 		}
 		runID, err := upsertRun(ctx, tx, typed.Workflow)
 		if err != nil {
@@ -94,7 +103,7 @@ func (a *API) handlePostEvents(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "commit: "+err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]int{"accepted": accepted})
+	writeJSON(w, http.StatusOK, map[string]int{"accepted": accepted, "dropped": dropped})
 }
 
 // upsertRun finds-or-creates the runs row for this workflow context and
@@ -132,11 +141,30 @@ func upsertRun(ctx context.Context, tx *sql.Tx, wf incomingWorkflow) (int64, err
 		return 0, err
 	}
 
+	// Resolve the most-applicable policy mode for this run so the dashboard's
+	// MODE column reflects what the agent is actually enforcing. We pick the
+	// most specific match: scope_repo+scope_workflow → scope_repo → no scope.
+	var policyMode string
+	_ = tx.QueryRowContext(ctx, `
+		SELECT mode FROM policies
+		WHERE (scope_repo = '' OR scope_repo IS NULL OR scope_repo = ?)
+		  AND (scope_workflow = '' OR scope_workflow IS NULL OR scope_workflow = ?)
+		ORDER BY
+		  (CASE WHEN scope_repo = ? AND scope_workflow = ? THEN 0
+		        WHEN scope_repo = ? THEN 1
+		        ELSE 2 END),
+		  updated_at DESC
+		LIMIT 1`,
+		repo, wf.Workflow, repo, wf.Workflow, repo).Scan(&policyMode)
+	if policyMode == "" {
+		policyMode = "audit"
+	}
+
 	// Insert new run.
 	res, err := tx.ExecContext(ctx, `
-		INSERT INTO runs (repository, workflow, run_id, run_number, sha, ref, actor)
-		VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		repo, wf.Workflow, runID, wf.RunNumber, wf.SHA, wf.Ref, wf.Actor)
+		INSERT INTO runs (repository, workflow, run_id, run_number, sha, ref, actor, policy_mode)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		repo, wf.Workflow, runID, wf.RunNumber, wf.SHA, wf.Ref, wf.Actor, policyMode)
 	if err != nil {
 		return 0, err
 	}
