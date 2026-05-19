@@ -18,7 +18,7 @@ import (
 	"github.com/cilium/ebpf/rlimit"
 )
 
-//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -cflags "-O2 -g -Wall" -target amd64,arm64 BlockProgram ../../../bpf/block.bpf.c -- -I../../../bpf
+//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -cflags "-O2 -g -Wall" -target arm64 blockProgram ../../../bpf/block.bpf.c -- -I../../../bpf
 
 // BlockProgram holds the loaded eBPF objects + the cgroup attachment.
 type BlockProgram struct {

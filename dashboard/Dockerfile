@@ -25,7 +25,6 @@ ENV NODE_ENV=production \
 
 # Next.js standalone output (set in next.config.mjs) ships only what the
 # server needs — no node_modules, no source.
-COPY --from=builder /app/public ./public
 COPY --from=builder /app/.next/standalone ./
 COPY --from=builder /app/.next/static ./.next/static
 

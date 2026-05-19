@@ -4,8 +4,7 @@
 
 import type { ConnectedRepo, DetectionRow, Policy, RunDetail, RunSummary } from "./types";
 
-export const BACKEND_URL =
-  process.env.NEXT_PUBLIC_BACKEND_URL || "http://localhost:8080";
+export const BACKEND_URL = process.env.NEXT_PUBLIC_BACKEND_URL ?? "";
 
 async function fetchJSON<T>(path: string, init?: RequestInit): Promise<T> {
   const r = await fetch(`${BACKEND_URL}${path}`, {

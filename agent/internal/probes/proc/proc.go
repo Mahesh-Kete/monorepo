@@ -19,7 +19,7 @@ import (
 	"github.com/cilium/ebpf/rlimit"
 )
 
-//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -cflags "-O2 -g -Wall" -target amd64,arm64 ProcProbe ../../../bpf/proc.bpf.c -- -I../../../bpf
+//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -cflags "-O2 -g -Wall" -target arm64 procProbe ../../../bpf/proc.bpf.c -- -I../../../bpf
 
 // ProcEvent is the userspace representation of one process exec.
 type ProcEvent struct {

@@ -24,7 +24,7 @@ import (
 // (netprobe_x86_bpfel.* and netprobe_arm64_bpfel.*) and the Go side picks the
 // right one at compile time via build constraints. Path is 3 levels up:
 // net/ -> probes/ -> internal/ -> agent/, then bpf/.
-//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -cflags "-O2 -g -Wall" -target amd64,arm64 NetProbe ../../../bpf/net.bpf.c -- -I../../../bpf
+//go:generate go run github.com/cilium/ebpf/cmd/bpf2go -cc clang -cflags "-O2 -g -Wall" -target arm64 netProbe ../../../bpf/net.bpf.c -- -I../../../bpf
 
 // NetEvent is the userspace representation of one outbound TCP connect.
 // Hostname is populated by main.go via the reverse-DNS cache; ProcessChain

@@ -50,7 +50,7 @@
 
 #define TASK_COMM_LEN 16
 
-struct proc_event {
+struct citadel_proc_event {
     __u32 pid;
     __u32 ppid;
     __u32 uid;
@@ -61,7 +61,7 @@ struct proc_event {
     __u64 ts_ns;
 };
 
-const struct proc_event *unused_proc_event __attribute__((unused));
+const struct citadel_proc_event *unused_proc_event __attribute__((unused));
 
 struct {
     __uint(type, BPF_MAP_TYPE_RINGBUF);
@@ -81,7 +81,7 @@ struct sched_process_exec_args {
 SEC("tracepoint/sched/sched_process_exec")
 int handle_sched_process_exec(struct sched_process_exec_args *ctx)
 {
-    struct proc_event *e = bpf_ringbuf_reserve(&proc_events, sizeof(*e), 0);
+    struct citadel_proc_event *e = bpf_ringbuf_reserve(&proc_events, sizeof(*e), 0);
     if (!e)
         return 0;
 

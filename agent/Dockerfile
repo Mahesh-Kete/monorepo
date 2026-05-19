@@ -32,12 +32,14 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
         make \
         git \
         curl \
-    && ln -sf /usr/bin/clang-14 /usr/bin/clang \
-    && ln -sf /usr/bin/llc-14   /usr/bin/llc \
+    && ln -sf /usr/bin/clang-14      /usr/bin/clang \
+    && ln -sf /usr/bin/llc-14        /usr/bin/llc \
+    && ln -sf /usr/bin/llvm-strip-14 /usr/bin/llvm-strip \
     && rm -rf /var/lib/apt/lists/*
 
-# Go toolchain
-RUN curl -fsSL https://go.dev/dl/go${GO_VERSION}.linux-amd64.tar.gz \
+# Go toolchain (auto-detect arch: amd64 or arm64)
+RUN ARCH=$(dpkg --print-architecture) \
+    && curl -fsSL https://go.dev/dl/go${GO_VERSION}.linux-${ARCH}.tar.gz \
         | tar -xz -C /usr/local
 ENV PATH="/usr/local/go/bin:/root/go/bin:${PATH}" \
     GOPATH="/root/go" \
