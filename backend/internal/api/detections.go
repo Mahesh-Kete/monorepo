@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strconv"
 	"time"
@@ -27,6 +28,17 @@ type postDetectionRequest struct {
 	RuleName string `json:"rule_name"`
 	Severity string `json:"severity"`
 	Message  string `json:"message,omitempty"`
+}
+
+// postDetectionByGitHubRequest is what the GitHub Actions composite action
+// posts — it doesn't know Citadel's internal run id, only the GitHub-side
+// repository + run_id pair. We resolve those to the row id.
+type postDetectionByGitHubRequest struct {
+	Repository  string `json:"repository"`
+	GitHubRunID string `json:"github_run_id"`
+	RuleName    string `json:"rule_name"`
+	Severity    string `json:"severity"`
+	Message     string `json:"message,omitempty"`
 }
 
 var validSeverity = map[string]bool{
@@ -72,6 +84,68 @@ func (a *API) handlePostDetection(w http.ResponseWriter, r *http.Request) {
 	}
 	id, _ := res.LastInsertId()
 	writeJSON(w, http.StatusCreated, map[string]int64{"id": id})
+}
+
+// ---------------------------------------------------------------------------
+// POST /api/detections/by-github-run
+//
+// The Citadel composite action calls this after scanning the workflow YAML
+// for imposter-commit references. It knows the GitHub-side identifiers
+// (repository + run_id) but not Citadel's internal row id, so we resolve
+// here. Idempotent-ish: duplicate calls just insert multiple detection rows.
+// ---------------------------------------------------------------------------
+
+func (a *API) handlePostDetectionByGitHub(w http.ResponseWriter, r *http.Request) {
+	var req postDetectionByGitHubRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
+		return
+	}
+	if req.Repository == "" || req.GitHubRunID == "" || req.RuleName == "" || req.Severity == "" {
+		writeError(w, http.StatusBadRequest,
+			"repository, github_run_id, rule_name, severity are required")
+		return
+	}
+	if !validSeverity[req.Severity] {
+		writeError(w, http.StatusBadRequest, "severity must be info|low|medium|high|critical")
+		return
+	}
+
+	var runID int64
+	err := a.DB.QueryRowContext(r.Context(),
+		`SELECT id FROM runs WHERE repository = ? AND run_id = ?`,
+		req.Repository, req.GitHubRunID).Scan(&runID)
+	if errors.Is(err, sql.ErrNoRows) {
+		// Be lenient: insert a placeholder run row so the detection isn't
+		// lost. The agent's first event will then backfill workflow / sha
+		// / actor on the existing row via upsertRun's UPDATE path.
+		res, errIns := a.DB.ExecContext(r.Context(), `
+			INSERT INTO runs (repository, run_id, policy_mode)
+			VALUES (?, ?, 'block')`,
+			req.Repository, req.GitHubRunID)
+		if errIns != nil {
+			writeError(w, http.StatusInternalServerError, "create placeholder run: "+errIns.Error())
+			return
+		}
+		runID, _ = res.LastInsertId()
+	} else if err != nil {
+		writeError(w, http.StatusInternalServerError, "query run: "+err.Error())
+		return
+	}
+
+	res, err := a.DB.ExecContext(r.Context(), `
+		INSERT INTO detections (run_id, rule_name, severity, message)
+		VALUES (?, ?, ?, ?)`,
+		runID, req.RuleName, req.Severity, req.Message)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "insert detection: "+err.Error())
+		return
+	}
+	id, _ := res.LastInsertId()
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"id":     id,
+		"run_id": runID,
+	})
 }
 
 // ---------------------------------------------------------------------------

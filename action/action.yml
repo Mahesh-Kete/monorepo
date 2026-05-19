@@ -142,6 +142,85 @@ runs:
         docker ps --filter "name=${{ inputs.container-name }}" --format "{{.Names}} {{.Status}}"
 
     # ----------------------------------------------------------------
+    # 5b. Imposter-commit scan.
+    #     Walk every .github/workflows/*.yml file in the checked-out
+    #     workspace, extract pinned 40-char SHA references
+    #     (`uses: org/repo[/path]@<sha>`), and verify each SHA is
+    #     reachable from the default branch of org/repo. If not, we
+    #     POST a detection of severity=critical and rule_name=
+    #     'imposter_commit' to the Citadel backend.
+    # ----------------------------------------------------------------
+    - name: 'Citadel: imposter-commit scan'
+      if: always()
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        BACKEND="${{ inputs.backend-url }}"
+        REPO="${GITHUB_REPOSITORY}"
+        RUN="${GITHUB_RUN_ID}"
+
+        echo "==> Citadel imposter-commit scan over .github/workflows/"
+        if [ ! -d .github/workflows ]; then
+          echo "no workflows dir; skipping"
+          exit 0
+        fi
+
+        # Collect pinned SHA references: "uses: org/repo[/path]@<40hex>".
+        # awk strips inline comments + whitespace; sort -u dedups.
+        refs=$(grep -ahoE 'uses:[[:space:]]*[A-Za-z0-9._-]+/[A-Za-z0-9._/-]+@[0-9a-f]{40}' \
+                 .github/workflows/*.yml .github/workflows/*.yaml 2>/dev/null \
+               | awk '{print $2}' | sort -u)
+
+        if [ -z "$refs" ]; then
+          echo "no pinned-SHA action references found"
+          exit 0
+        fi
+
+        post_detection() {
+          local msg="$1"
+          curl -fsS -X POST "$BACKEND/api/detections/by-github-run" \
+            -H 'Content-Type: application/json' \
+            -d "$(jq -n --arg r "$REPO" --arg g "$RUN" --arg m "$msg" '{
+              repository: $r, github_run_id: $g,
+              rule_name: "imposter_commit", severity: "critical",
+              message: $m
+            }')" >/dev/null \
+            && echo "✗ detection posted: $msg" \
+            || echo "(failed to post detection to backend — continuing)"
+        }
+
+        while IFS= read -r ref; do
+          [ -z "$ref" ] && continue
+          owner_repo="${ref%@*}"
+          sha="${ref##*@}"
+          base_repo=$(echo "$owner_repo" | awk -F/ '{print $1"/"$2}')
+
+          echo "checking $owner_repo @ $sha (base=$base_repo)"
+          # Compare default branch HEAD ... sha.
+          # status: identical | behind = sha is an ancestor of HEAD = SAFE
+          # status: ahead | diverged    = sha is NOT on default branch = IMPOSTER
+          # 404 / error                 = sha doesn't exist on this repo at all
+          status=$(gh api -X GET "repos/$base_repo/compare/HEAD...$sha" \
+                    --jq '.status // empty' 2>/dev/null || true)
+
+          case "$status" in
+            identical|behind)
+              echo "  ✓ $sha reachable from default branch — safe"
+              ;;
+            ahead|diverged)
+              post_detection "Imposter commit reference: $owner_repo@$sha is NOT reachable from $base_repo's default branch (status: $status). Likely a fork-controlled SHA that looks pinned for security but isn't on the upstream main line."
+              ;;
+            "")
+              post_detection "Unverifiable action SHA: $owner_repo@$sha could not be located on $base_repo (404 or API error). Either an imposter-commit reference or a stale pin."
+              ;;
+            *)
+              post_detection "Unexpected compare status '$status' for $owner_repo@$sha — flagging for review."
+              ;;
+          esac
+        done <<< "$refs"
+
+    # ----------------------------------------------------------------
     # 6. Post-job: diff the workspace against the baseline (always),
     #    then tear the agent down.
     # ----------------------------------------------------------------
