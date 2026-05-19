@@ -38,6 +38,12 @@ type Policy struct {
 	// forward A records — and lets us block the first packet, not just the
 	// retransmits.
 	AllowedIPSet map[string]struct{}
+
+	// privateNets are the always-allowed RFC1918 / link-local / Docker bridge
+	// ranges. We check destination IPs against these in addition to AllowedIPSet
+	// because container-to-container traffic uses ephemeral addresses inside
+	// 172.16.0.0/12 etc. that we can't predict at startup.
+	privateNets []*net.IPNet
 }
 
 // ResolveAllowlist forward-resolves every entry in AllowedDomains, plus any
@@ -52,6 +58,21 @@ func (p *Policy) ResolveAllowlist(ctx context.Context, log *slog.Logger, extraHo
 	// Always allow loopback so the agent can reach its own backend.
 	for _, ip := range []string{"127.0.0.1", "::1"} {
 		p.AllowedIPSet[ip] = struct{}{}
+	}
+	// Always allow private/internal RFC1918 + Docker bridge networks. Without
+	// this we'd blackhole every container-to-container call (Citadel's own
+	// dashboard → backend bridge traffic is the prime example) and the demo
+	// would die in interesting ways. Production deployments should pin this
+	// to specific peer IPs/subnets instead.
+	for _, cidr := range []string{
+		"10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16",
+	} {
+		_, ipnet, err := net.ParseCIDR(cidr)
+		if err != nil {
+			continue
+		}
+		// Mark a sentinel range entry. We'll do CIDR membership checks too.
+		p.privateNets = append(p.privateNets, ipnet)
 	}
 	for _, ip := range p.AllowedIPs {
 		p.AllowedIPSet[ip] = struct{}{}
@@ -84,14 +105,19 @@ func (p *Policy) ResolveAllowlist(ctx context.Context, log *slog.Logger, extraHo
 }
 
 // ShouldBlockIP returns true iff we're in block mode and the destination IP
-// is not in the pre-resolved AllowedIPSet. Loopback addresses are always
-// allowed (seeded by ResolveAllowlist).
+// is not in the pre-resolved AllowedIPSet AND is not inside an always-allowed
+// private/internal CIDR. Loopback is also in AllowedIPSet via the seed.
 func (p *Policy) ShouldBlockIP(ip net.IP) bool {
 	if p == nil || p.Mode != "block" || ip == nil {
 		return false
 	}
 	if _, ok := p.AllowedIPSet[ip.String()]; ok {
 		return false
+	}
+	for _, n := range p.privateNets {
+		if n.Contains(ip) {
+			return false
+		}
 	}
 	return true
 }
