@@ -1,27 +1,27 @@
 "use client";
 
-import { useMemo, useState } from "react";
+import { useState } from "react";
 import { useParams } from "next/navigation";
 import {
-  Globe2, FileText, Cpu, LayoutDashboard, BookOpen,
-  GitCommit, User, Calendar, Hash, AlertTriangle,
+  Globe2, FileText, Cpu, LayoutDashboard, AlertTriangle,
+  GitCommit, User, Calendar, Hash,
 } from "lucide-react";
 import { api, type ProcessTreeNode } from "@/lib/api";
-import type { CitadelEvent, DetectionRow, RunDetail } from "@/lib/types";
+import type { CitadelEvent, DetectionRow, GitHubActionLogRow, RunDetail } from "@/lib/types";
 import {
   JobStatusDot, ModeBadge, SeverityBadge, StatusPill,
 } from "@/components/badges";
 import { LiveIndicator } from "@/components/live-indicator";
 import { useLivePoll } from "@/lib/use-live-poll";
 
-type Tab = "summary" | "network" | "files" | "processes" | "recommendations";
+type Tab = "summary" | "network" | "files" | "processes" | "action_logs";
 
 const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
   { id: "summary",         label: "Summary",         icon: <LayoutDashboard className="h-4 w-4" /> },
   { id: "network",         label: "Network Events",  icon: <Globe2 className="h-4 w-4" /> },
   { id: "files",           label: "File Write Events", icon: <FileText className="h-4 w-4" /> },
   { id: "processes",       label: "Process Events",  icon: <Cpu className="h-4 w-4" /> },
-  { id: "recommendations", label: "Recommendations", icon: <BookOpen className="h-4 w-4" /> },
+  { id: "action_logs",     label: "Action Logs",     icon: <AlertTriangle className="h-4 w-4" /> },
 ];
 
 export default function RunDetailPage() {
@@ -71,7 +71,7 @@ export default function RunDetailPage() {
             {tab === "network" && <NetworkTab events={byType("network")} />}
             {tab === "files" && <FilesTab events={[...byType("file"), ...byType("file_tamper")]} />}
             {tab === "processes" && <ProcessTab tree={tree} flat={byType("process")} />}
-            {tab === "recommendations" && <RecommendationsTab events={events} detections={detections} />}
+            {tab === "action_logs" && <ActionLogsTab logs={data.action_logs ?? []} />}
           </div>
         </section>
       </div>
@@ -406,27 +406,37 @@ function TreeNode({ node, depth }: { node: ProcessTreeNode; depth: number }) {
 }
 
 // ============================================================================
-// Recommendations tab — derived guidance based on what we observed
+// Action Logs tab — GitHub Actions annotations/log lines
 // ============================================================================
 
-function RecommendationsTab({ events, detections }: { events: CitadelEvent[]; detections: DetectionRow[] }) {
-  const recs = useMemo(() => buildRecommendations(events, detections), [events, detections]);
+function ActionLogsTab({ logs }: { logs: GitHubActionLogRow[] }) {
   return (
-    <Card title="Recommendations">
-      {recs.length === 0 ? (
-        <p className="text-ink-subtle text-sm p-4">Nothing actionable detected. This run looks clean.</p>
+    <Card title="GitHub Actions logs" count={logs.length}>
+      {logs.length === 0 ? (
+        <p className="text-ink-subtle text-sm p-4">No GitHub Actions log annotations captured for this run.</p>
       ) : (
         <ul className="divide-y divide-surface-line">
-          {recs.map((r, i) => (
-            <li key={i} className="px-3 py-3">
+          {logs.map((log) => (
+            <li key={log.id} className="px-3 py-3">
               <div className="flex items-center gap-2">
-                <SeverityBadge severity={r.severity} />
-                <span className="font-medium">{r.title}</span>
+                <SeverityBadge severity={normalizeLogLevel(log.level)} />
+                {log.rule_name && <span className="mono text-sm text-ink-muted">{log.rule_name}</span>}
+                <span className="text-xs text-ink-subtle">{new Date(log.created_at).toLocaleTimeString()}</span>
+                {log.html_url && (
+                  <a
+                    href={log.html_url}
+                    target="_blank"
+                    rel="noopener noreferrer"
+                    className="ml-auto text-xs text-brand-600 hover:underline"
+                  >
+                    Open in GitHub
+                  </a>
+                )}
               </div>
-              <p className="text-sm text-ink-muted mt-1">{r.detail}</p>
-              {r.allowlist_suggestion && r.allowlist_suggestion.length > 0 && (
-                <pre className="mt-2 rounded bg-surface-rail border border-surface-line px-3 py-2 text-xs mono whitespace-pre-wrap">{r.allowlist_suggestion.join("\n")}</pre>
-              )}
+              <p className="text-sm mt-1">{log.message}</p>
+              <div className="mt-1 text-xs text-ink-muted">
+                {[log.job_name, log.step, log.line ? `line ${log.line}` : ""].filter(Boolean).join(" · ") || "GitHub Actions"}
+              </div>
             </li>
           ))}
         </ul>
@@ -435,49 +445,13 @@ function RecommendationsTab({ events, detections }: { events: CitadelEvent[]; de
   );
 }
 
-function buildRecommendations(events: CitadelEvent[], detections: DetectionRow[]) {
-  const out: { title: string; detail: string; severity: "info" | "low" | "medium" | "high" | "critical"; allowlist_suggestion?: string[] }[] = [];
-
-  const hostnames = new Set<string>();
-  for (const e of events) {
-    if (e.type === "network" && e.network?.hostname) hostnames.add(e.network.hostname);
+function normalizeLogLevel(level: string): "info" | "low" | "medium" | "high" | "critical" {
+  if (level === "critical" || level === "high" || level === "medium" || level === "low" || level === "info") {
+    return level;
   }
-  if (hostnames.size > 0) {
-    out.push({
-      title: "Suggested allowlist for this workflow",
-      detail: `${hostnames.size} distinct outbound hostnames observed. Add them to a block-mode policy to deny everything else by default.`,
-      severity: "info",
-      allowlist_suggestion: [...hostnames].sort(),
-    });
-  }
-
-  const crits = detections.filter((d) => d.severity === "critical");
-  if (crits.length > 0) {
-    out.push({
-      title: "Investigate critical findings",
-      detail: `${crits.length} critical detection${crits.length > 1 ? "s" : ""} fired (${crits.map((d) => d.rule_name).join(", ")}). Review the offending events and tighten the policy.`,
-      severity: "critical",
-    });
-  }
-
-  const tamperEvents = events.filter((e) => e.type === "file_tamper").length;
-  if (tamperEvents > 0) {
-    out.push({
-      title: "Source files modified post-checkout",
-      detail: `${tamperEvents} file${tamperEvents > 1 ? "s were" : " was"} modified between checkout and build. Validate the diff and consider failing the build on unexpected workspace changes.`,
-      severity: "high",
-    });
-  }
-
-  if (out.length === 0 && events.length > 0) {
-    out.push({
-      title: "Baseline this workflow",
-      detail: "No anomalies in this run. After 3 clean runs the baseline becomes stable and Citadel will alert on any new domains or processes.",
-      severity: "info",
-    });
-  }
-
-  return out;
+  if (level === "error") return "high";
+  if (level === "warning") return "medium";
+  return "info";
 }
 
 // ============================================================================

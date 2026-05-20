@@ -91,15 +91,16 @@ type connectedRepo struct {
 }
 
 type connectRepoRequest struct {
-	Repository string `json:"repository"`     // owner/repo
-	Token      string `json:"token"`          // PAT
+	Repository string `json:"repository"`      // owner/repo
+	Token      string `json:"token,omitempty"` // optional PAT
 	Note       string `json:"note,omitempty"`
 }
 
 // POST /api/repos/connect
 //
-// Validates the PAT by calling /user, then inserts into connected_repos.
-// On conflict (repo already connected) replaces the token.
+// If a PAT is provided, validates it by calling /user, then inserts into
+// connected_repos. Repos can also be connected without a PAT for manual
+// public-key / runner workflows; those rows are not GitHub-polled.
 func (a *API) handleConnectRepo(w http.ResponseWriter, r *http.Request) {
 	var req connectRepoRequest
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
@@ -113,30 +114,31 @@ func (a *API) handleConnectRepo(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "repository must be in owner/repo format")
 		return
 	}
-	if req.Token == "" {
-		writeError(w, http.StatusBadRequest, "token is required")
-		return
-	}
 
-	ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
-	defer cancel()
 	cli := github.New()
-	user, err := cli.Whoami(ctx, req.Token)
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "token invalid: "+err.Error())
-		return
-	}
+	authenticatedAs := "manual setup"
+	tokenProvided := req.Token != ""
+	if tokenProvided {
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		defer cancel()
+		user, err := cli.Whoami(ctx, req.Token)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "token invalid: "+err.Error())
+			return
+		}
+		authenticatedAs = user.Login
 
-	// Quick sanity check that the token can also see the repo.
-	if _, err := cli.ListRecentRuns(ctx, req.Token, req.Repository, 1); err != nil {
-		writeError(w, http.StatusBadRequest, fmt.Sprintf("cannot read %s with this token: %v", req.Repository, err))
-		return
+		// Quick sanity check that the token can also see the repo.
+		if _, err := cli.ListRecentRuns(ctx, req.Token, req.Repository, 1); err != nil {
+			writeError(w, http.StatusBadRequest, fmt.Sprintf("cannot read %s with this token: %v", req.Repository, err))
+			return
+		}
 	}
 
 	// Upsert.
-	_, err = a.DB.ExecContext(r.Context(), `
+	_, err := a.DB.ExecContext(r.Context(), `
 		INSERT INTO connected_repos (repository, token, note)
-		VALUES (?, ?, NULLIF(?, ''))
+		VALUES (?, NULLIF(?, ''), NULLIF(?, ''))
 		ON CONFLICT(repository) DO UPDATE SET
 			token=excluded.token,
 			note=COALESCE(NULLIF(excluded.note, ''), note),
@@ -158,38 +160,46 @@ func (a *API) handleConnectRepo(w http.ResponseWriter, r *http.Request) {
 	// the PAT lacks write scope or anything else goes sideways.
 	resp := map[string]any{
 		"repository":       req.Repository,
-		"authenticated_as": user.Login,
+		"authenticated_as": authenticatedAs,
+		"token_provided":   tokenProvided,
 	}
 	if repoID > 0 {
 		resp["repo_id"] = repoID
-		resp["runner_bootstrap_url"] = fmt.Sprintf("/api/repos/%d/runner-bootstrap.sh", repoID)
+		if tokenProvided {
+			resp["runner_bootstrap_url"] = fmt.Sprintf("/api/repos/%d/runner-bootstrap.sh", repoID)
+		}
 	}
-	injCtx, injCancel := context.WithTimeout(r.Context(), 15*time.Second)
-	defer injCancel()
-	put, putErr := cli.PutWorkflowFile(
-		injCtx, req.Token, req.Repository,
-		".github/workflows/citadel.yml",
-		workflowYAML(),
-		"Enable Citadel runtime EDR monitoring",
-	)
-	switch {
-	case putErr != nil:
-		a.Logger.Warn("workflow inject failed", "repo", req.Repository, "err", putErr)
+	if !tokenProvided {
 		resp["workflow_injected"] = false
-		resp["workflow_message"] = "Could not push .github/workflows/citadel.yml automatically: " +
-			putErr.Error() + ". You can add it manually."
-	case put.Skipped:
-		resp["workflow_injected"] = false
-		resp["workflow_message"] = put.Message
-	default:
-		resp["workflow_injected"] = true
-		resp["workflow_message"] = put.Message
-		resp["workflow_url"] = put.HTMLURL
+		resp["workflow_message"] = "No PAT provided; add the workflow and runner manually."
+	} else {
+		injCtx, injCancel := context.WithTimeout(r.Context(), 15*time.Second)
+		defer injCancel()
+		put, putErr := cli.PutWorkflowFile(
+			injCtx, req.Token, req.Repository,
+			".github/workflows/citadel.yml",
+			workflowYAML(),
+			"Enable Citadel runtime EDR monitoring",
+		)
+		switch {
+		case putErr != nil:
+			a.Logger.Warn("workflow inject failed", "repo", req.Repository, "err", putErr)
+			resp["workflow_injected"] = false
+			resp["workflow_message"] = "Could not push .github/workflows/citadel.yml automatically: " +
+				putErr.Error() + ". You can add it manually."
+		case put.Skipped:
+			resp["workflow_injected"] = false
+			resp["workflow_message"] = put.Message
+		default:
+			resp["workflow_injected"] = true
+			resp["workflow_message"] = put.Message
+			resp["workflow_url"] = put.HTMLURL
+		}
 	}
 
 	a.Logger.Info("repo connected",
 		"repo", req.Repository,
-		"as_user", user.Login,
+		"as_user", authenticatedAs,
 		"workflow_injected", resp["workflow_injected"])
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -254,6 +264,12 @@ func (a *API) handleDeleteRepo(w http.ResponseWriter, r *http.Request) {
 	// Cascade in dependency order: events + detections reference run_id, runs
 	// reference repository. Use a sub-select rather than a join-delete because
 	// SQLite's syntax for DELETE-JOIN is awkward.
+	delActionLogs, err := tx.ExecContext(r.Context(),
+		`DELETE FROM github_action_logs WHERE run_id IN (SELECT id FROM runs WHERE repository = ?)`, repo)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "delete action logs: "+err.Error())
+		return
+	}
 	delEvents, err := tx.ExecContext(r.Context(),
 		`DELETE FROM events WHERE run_id IN (SELECT id FROM runs WHERE repository = ?)`, repo)
 	if err != nil {
@@ -287,16 +303,18 @@ func (a *API) handleDeleteRepo(w http.ResponseWriter, r *http.Request) {
 	dtN, _ := delDetections.RowsAffected()
 	rnN, _ := delRuns.RowsAffected()
 	rpN, _ := delRepo.RowsAffected()
+	alN, _ := delActionLogs.RowsAffected()
 
 	a.Logger.Info("repo disconnected (cascade)",
 		"repo", repo,
-		"runs", rnN, "events", evN, "detections", dtN)
+		"runs", rnN, "events", evN, "detections", dtN, "action_logs", alN)
 
 	writeJSON(w, http.StatusOK, map[string]int64{
-		"deleted":            rpN,
-		"runs_deleted":       rnN,
-		"events_deleted":     evN,
-		"detections_deleted": dtN,
+		"deleted":             rpN,
+		"runs_deleted":        rnN,
+		"events_deleted":      evN,
+		"detections_deleted":  dtN,
+		"action_logs_deleted": alN,
 	})
 }
 
@@ -307,7 +325,8 @@ func (a *API) handleRefreshRepo(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 	// Find the repo, then trigger an immediate sync inline so the user
 	// gets feedback right away.
-	var repo, token string
+	var repo string
+	var token sql.NullString
 	err := a.DB.QueryRowContext(r.Context(),
 		`SELECT repository, token FROM connected_repos WHERE id = ?`, id).Scan(&repo, &token)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -318,11 +337,15 @@ func (a *API) handleRefreshRepo(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "query: "+err.Error())
 		return
 	}
+	if !token.Valid || strings.TrimSpace(token.String) == "" {
+		writeError(w, http.StatusBadRequest, "repo has no PAT; GitHub polling is disabled for manual/public-key setup")
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 	cli := github.New()
-	runs, err := cli.ListRecentRuns(ctx, token, repo, 20)
+	runs, err := cli.ListRecentRuns(ctx, token.String, repo, 20)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "github: "+err.Error())
 		return
@@ -351,7 +374,8 @@ func validRepoFormat(repo string) bool {
 func (a *API) handleRunnerBootstrap(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
 
-	var repo, token string
+	var repo string
+	var token sql.NullString
 	err := a.DB.QueryRowContext(r.Context(),
 		`SELECT repository, token FROM connected_repos WHERE id = ?`, id).Scan(&repo, &token)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -362,11 +386,15 @@ func (a *API) handleRunnerBootstrap(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "query: "+err.Error())
 		return
 	}
+	if !token.Valid || strings.TrimSpace(token.String) == "" {
+		writeError(w, http.StatusBadRequest, "repo has no PAT; runner bootstrap requires a GitHub registration token")
+		return
+	}
 
 	ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 	defer cancel()
 	cli := github.New()
-	rt, err := cli.RegistrationToken(ctx, token, repo)
+	rt, err := cli.RegistrationToken(ctx, token.String, repo)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "github registration-token: "+err.Error())
 		return

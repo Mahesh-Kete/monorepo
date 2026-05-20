@@ -102,10 +102,24 @@ export interface DetectionRow {
   created_at: string;
 }
 
+export interface GitHubActionLogRow {
+  id: number;
+  run_id: number;
+  job_name?: string;
+  step?: string;
+  level: string;
+  rule_name?: string;
+  message: string;
+  html_url?: string;
+  line?: number;
+  created_at: string;
+}
+
 export interface RunDetail {
   run: RunSummary;
   events: CitadelEvent[];
   detections: DetectionRow[];
+  action_logs?: GitHubActionLogRow[];
 }
 
 export interface Policy {

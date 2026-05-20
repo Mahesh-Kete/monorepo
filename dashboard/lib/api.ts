@@ -46,7 +46,7 @@ export const api = {
     fetchJSON<Policy>(`/api/policies/applicable?repo=${encodeURIComponent(repo)}&workflow=${encodeURIComponent(workflow)}`),
   // --- Phase 11: Connect repo ---
   listRepos: () => fetchJSON<ConnectedRepo[]>(`/api/repos`),
-  connectRepo: (body: { repository: string; token: string; note?: string }) =>
+  connectRepo: (body: { repository: string; token?: string; note?: string }) =>
     fetchJSON<{
       repository: string;
       authenticated_as: string;

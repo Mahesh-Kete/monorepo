@@ -50,6 +50,7 @@ func New(db *sql.DB, logger *slog.Logger) http.Handler {
 		r.Get("/detections", a.handleListDetections)
 		r.Post("/detections", a.handlePostDetection)
 		r.Post("/detections/by-github-run", a.handlePostDetectionByGitHub)
+		r.Post("/github-actions/logs", a.handlePostGitHubLog)
 
 		r.Get("/policies", a.handleListPolicies)
 		r.Post("/policies", a.handleCreatePolicy)

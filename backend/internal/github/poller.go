@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"log/slog"
 	"strconv"
+	"strings"
 	"time"
 )
 
@@ -60,7 +61,10 @@ type connectedRepo struct {
 }
 
 func (p *Poller) sweep(ctx context.Context) {
-	rows, err := p.DB.QueryContext(ctx, `SELECT id, repository, token FROM connected_repos`)
+	rows, err := p.DB.QueryContext(ctx, `
+		SELECT id, repository, COALESCE(token, '')
+		FROM connected_repos
+		WHERE token IS NOT NULL AND token != ''`)
 	if err != nil {
 		p.Logger.Warn("list connected repos", "err", err)
 		return
@@ -92,6 +96,9 @@ func (p *Poller) sweep(ctx context.Context) {
 }
 
 func (p *Poller) syncRepo(ctx context.Context, r connectedRepo) error {
+	if strings.TrimSpace(r.Token) == "" {
+		return nil
+	}
 	runs, err := p.gh.ListRecentRuns(ctx, r.Token, r.Repository, perRepoLimit)
 	if err != nil {
 		return err

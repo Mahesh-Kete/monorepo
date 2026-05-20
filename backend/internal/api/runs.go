@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -35,21 +36,35 @@ type runSummary struct {
 	SeverityMax  string         `json:"severity_max,omitempty"`
 
 	// GitHub Actions metadata (Phase 11 "Connect repo")
-	GHStatus       string  `json:"gh_status,omitempty"`     // queued | in_progress | completed
-	GHConclusion   string  `json:"gh_conclusion,omitempty"` // success | failure | cancelled | …
-	GHHTMLURL      string  `json:"gh_html_url,omitempty"`
-	GHDurationSec  int     `json:"gh_duration_sec,omitempty"`
-	GHEventName    string  `json:"gh_event_name,omitempty"`
-	GHHeadBranch   string  `json:"gh_head_branch,omitempty"`
-	GHSyncedAt     *time.Time `json:"gh_synced_at,omitempty"`
-	AgentSeen      bool    `json:"agent_seen"`
+	GHStatus      string     `json:"gh_status,omitempty"`     // queued | in_progress | completed
+	GHConclusion  string     `json:"gh_conclusion,omitempty"` // success | failure | cancelled | …
+	GHHTMLURL     string     `json:"gh_html_url,omitempty"`
+	GHDurationSec int        `json:"gh_duration_sec,omitempty"`
+	GHEventName   string     `json:"gh_event_name,omitempty"`
+	GHHeadBranch  string     `json:"gh_head_branch,omitempty"`
+	GHSyncedAt    *time.Time `json:"gh_synced_at,omitempty"`
+	AgentSeen     bool       `json:"agent_seen"`
 }
 
 // runDetail is the shape returned by GET /api/runs/:id.
 type runDetail struct {
-	Run        runSummary        `json:"run"`
-	Events     []json.RawMessage `json:"events"`
-	Detections []detectionRow    `json:"detections"`
+	Run        runSummary           `json:"run"`
+	Events     []json.RawMessage    `json:"events"`
+	Detections []detectionRow       `json:"detections"`
+	ActionLogs []githubActionLogRow `json:"action_logs"`
+}
+
+type githubActionLogRow struct {
+	ID        int64     `json:"id"`
+	RunID     int64     `json:"run_id"`
+	JobName   string    `json:"job_name,omitempty"`
+	Step      string    `json:"step,omitempty"`
+	Level     string    `json:"level"`
+	RuleName  string    `json:"rule_name,omitempty"`
+	Message   string    `json:"message"`
+	HTMLURL   string    `json:"html_url,omitempty"`
+	Line      int       `json:"line,omitempty"`
+	CreatedAt time.Time `json:"created_at"`
 }
 
 // ---------------------------------------------------------------------------
@@ -222,12 +237,46 @@ func (a *API) handleGetRun(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "query detections: "+err.Error())
 		return
 	}
+	actionLogs, err := a.listGitHubActionLogsForRun(r.Context(), id)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "query github action logs: "+err.Error())
+		return
+	}
 
 	writeJSON(w, http.StatusOK, runDetail{
 		Run:        s,
 		Events:     events,
 		Detections: detections,
+		ActionLogs: actionLogs,
 	})
+}
+
+func (a *API) listGitHubActionLogsForRun(ctx context.Context, id int64) ([]githubActionLogRow, error) {
+	rows, err := a.DB.QueryContext(ctx, `
+		SELECT id, run_id, COALESCE(job_name, ''), COALESCE(step, ''),
+		       level, COALESCE(rule_name, ''), message, COALESCE(html_url, ''),
+		       COALESCE(line, 0), created_at
+		FROM github_action_logs
+		WHERE run_id = ?
+		ORDER BY id ASC`, id)
+	if err != nil {
+		return nil, err
+	}
+	defer func() { _ = rows.Close() }()
+
+	out := make([]githubActionLogRow, 0)
+	for rows.Next() {
+		var row githubActionLogRow
+		if err := rows.Scan(
+			&row.ID, &row.RunID, &row.JobName, &row.Step,
+			&row.Level, &row.RuleName, &row.Message, &row.HTMLURL,
+			&row.Line, &row.CreatedAt,
+		); err != nil {
+			return nil, err
+		}
+		out = append(out, row)
+	}
+	return out, rows.Err()
 }
 
 // ---------------------------------------------------------------------------

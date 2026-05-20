@@ -237,11 +237,8 @@ function ConnectDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () 
           <>
             <h2 className="text-lg font-semibold mb-1">Connect a GitHub repository</h2>
             <p className="text-sm text-ink-muted mb-4">
-              Paste a Personal Access Token with <code className="mono">repo</code> scope.
-              Citadel will (1) poll <code className="mono">/actions/runs</code>,
-              (2) commit <code className="mono">.github/workflows/citadel.yml</code>,
-              and (3) hand you a one-liner to register the self-hosted runner.
-              The token is stored only on this server.
+              Paste a Personal Access Token only if you want Citadel to poll GitHub and auto-commit the workflow.
+              Leave it blank when you are using a manual public-key or runner setup.
             </p>
 
             <div className="space-y-3 text-sm">
@@ -252,10 +249,10 @@ function ConnectDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () 
                 placeholder="owner/repo  (e.g. Mahesh-Kete/citadel)"
               />
               <Field
-                label="Personal Access Token"
+                label="Personal Access Token (optional)"
                 value={token}
                 setValue={setToken}
-                placeholder="ghp_… (paste your fine-grained or classic PAT)"
+                placeholder="ghp_… or leave blank for manual/public-key setup"
                 type="password"
               />
               <Field
@@ -270,7 +267,7 @@ function ConnectDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () 
                   target="_blank" rel="noopener noreferrer"
                   className="text-brand-600 hover:underline"
                 >
-                  Create a token with the right scopes →
+                  Create a token for automatic GitHub polling →
                 </a>
               </p>
               {err && (
@@ -289,7 +286,7 @@ function ConnectDialog({ onClose, onSaved }: { onClose: () => void; onSaved: () 
               </button>
               <button
                 onClick={submit}
-                disabled={submitting || !repo || !token}
+                disabled={submitting || !repo}
                 className="rounded bg-brand-600 px-3 py-1.5 text-white hover:bg-brand-700 disabled:opacity-50"
               >
                 {submitting ? "Connecting…" : "Connect"}
