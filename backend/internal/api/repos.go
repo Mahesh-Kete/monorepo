@@ -107,7 +107,7 @@ func (a *API) handleConnectRepo(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "invalid JSON: "+err.Error())
 		return
 	}
-	req.Repository = strings.TrimSpace(req.Repository)
+	req.Repository = strings.ToLower(strings.TrimSpace(req.Repository))
 	req.Token = strings.TrimSpace(req.Token)
 
 	if !validRepoFormat(req.Repository) {
@@ -337,15 +337,14 @@ func (a *API) handleRefreshRepo(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "query: "+err.Error())
 		return
 	}
-	if !token.Valid || strings.TrimSpace(token.String) == "" {
-		writeError(w, http.StatusBadRequest, "repo has no PAT; GitHub polling is disabled for manual/public-key setup")
-		return
-	}
-
 	ctx, cancel := context.WithTimeout(r.Context(), 30*time.Second)
 	defer cancel()
 	cli := github.New()
-	runs, err := cli.ListRecentRuns(ctx, token.String, repo, 20)
+	tokenValue := ""
+	if token.Valid {
+		tokenValue = token.String
+	}
+	runs, err := cli.ListRecentRuns(ctx, tokenValue, repo, 20)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, "github: "+err.Error())
 		return

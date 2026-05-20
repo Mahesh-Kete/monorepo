@@ -17,7 +17,7 @@ import (
 )
 
 const (
-	baseURL       = "https://api.github.com"
+	baseURL        = "https://api.github.com"
 	defaultTimeout = 10 * time.Second
 )
 
@@ -60,12 +60,12 @@ func (c *Client) Whoami(ctx context.Context, token string) (*User, error) {
 // WorkflowRun matches the subset of fields we care about from
 // /repos/{owner}/{repo}/actions/runs.
 type WorkflowRun struct {
-	ID           int64     `json:"id"`            // GITHUB_RUN_ID
-	Name         string    `json:"name"`          // workflow name
+	ID           int64     `json:"id"`   // GITHUB_RUN_ID
+	Name         string    `json:"name"` // workflow name
 	RunNumber    int64     `json:"run_number"`
-	Event        string    `json:"event"`         // trigger event (push, pull_request, …)
-	Status       string    `json:"status"`        // queued | in_progress | completed
-	Conclusion   string    `json:"conclusion"`    // success | failure | cancelled | … | "" while running
+	Event        string    `json:"event"`      // trigger event (push, pull_request, …)
+	Status       string    `json:"status"`     // queued | in_progress | completed
+	Conclusion   string    `json:"conclusion"` // success | failure | cancelled | … | "" while running
 	HeadBranch   string    `json:"head_branch"`
 	HeadSHA      string    `json:"head_sha"`
 	HTMLURL      string    `json:"html_url"`
@@ -74,7 +74,7 @@ type WorkflowRun struct {
 	Actor        struct {
 		Login string `json:"login"`
 	} `json:"actor"`
-	WorkflowID int64 `json:"workflow_id"`
+	WorkflowID int64  `json:"workflow_id"`
 	Path       string `json:"path"`
 }
 
@@ -262,7 +262,9 @@ func (c *Client) PutWorkflowFile(
 }
 
 func (c *Client) attachAuth(req *http.Request, token string) {
-	req.Header.Set("Authorization", "Bearer "+token)
+	if strings.TrimSpace(token) != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
 	req.Header.Set("Accept", "application/vnd.github+json")
 	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
 	req.Header.Set("User-Agent", "citadel-backend/0.1")

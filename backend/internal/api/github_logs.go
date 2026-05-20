@@ -49,6 +49,7 @@ func (a *API) handlePostGitHubLog(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "repository and run_id are required")
 		return
 	}
+	req.Repository = strings.ToLower(strings.TrimSpace(req.Repository))
 
 	if req.Status == "" {
 		req.Status = statusFromConclusion(req.Conclusion)
@@ -195,10 +196,25 @@ func insertGitHubLogAnnotations(ctx context.Context, tx *sql.Tx, runID int64, re
 		if ruleName == "" {
 			ruleName = "github.actions.log"
 		}
+		source := &detectionSource{
+			Line: ann.Line,
+			URL:  firstNonEmpty(ann.HTMLURL, req.HTMLURL),
+		}
+		title, summary, detailsJSON, sourceJSON := structuredDetectionValues(
+			ruleName,
+			ann.Message,
+			"",
+			"",
+			[]detectionDetail{
+				{Label: "Job", Value: "build"},
+				{Label: "Step", Value: firstNonEmpty(ann.Step, "GitHub Actions annotation")},
+			},
+			source,
+		)
 		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO detections (run_id, event_id, rule_name, severity, message)
-			VALUES (?, ?, ?, ?, ?)`,
-			runID, eventID, ruleName, severity, ann.Message); err != nil {
+			INSERT INTO detections (run_id, event_id, rule_name, severity, message, title, summary, details, source)
+			VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			runID, eventID, ruleName, severity, ann.Message, title, summary, detailsJSON, sourceJSON); err != nil {
 			return eventCount, detectionCount, err
 		}
 		detectionCount++
@@ -303,6 +319,15 @@ func severityForAnnotation(ann githubLogAnnotation) string {
 	default:
 		return ""
 	}
+}
+
+func firstNonEmpty(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 func statusFromConclusion(conclusion string) string {

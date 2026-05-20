@@ -6,39 +6,66 @@ import (
 	"encoding/json"
 	"errors"
 	"net/http"
+	"regexp"
 	"strconv"
+	"strings"
 	"time"
 )
 
 // detectionRow is the shape returned by GET /api/detections and embedded
 // inside runDetail.
 type detectionRow struct {
-	ID        int64     `json:"id"`
-	RunID     int64     `json:"run_id"`
-	EventID   *int64    `json:"event_id,omitempty"`
-	RuleName  string    `json:"rule_name"`
-	Severity  string    `json:"severity"`
-	Message   string    `json:"message,omitempty"`
-	CreatedAt time.Time `json:"created_at"`
+	ID        int64             `json:"id"`
+	RunID     int64             `json:"run_id"`
+	EventID   *int64            `json:"event_id,omitempty"`
+	RuleName  string            `json:"rule_name"`
+	Severity  string            `json:"severity"`
+	Message   string            `json:"message,omitempty"`
+	Title     string            `json:"title,omitempty"`
+	Summary   string            `json:"summary,omitempty"`
+	Details   []detectionDetail `json:"details,omitempty"`
+	Source    *detectionSource  `json:"source,omitempty"`
+	CreatedAt time.Time         `json:"created_at"`
+}
+
+type detectionDetail struct {
+	Label string `json:"label"`
+	Value string `json:"value"`
+}
+
+type detectionSource struct {
+	File string `json:"file,omitempty"`
+	Line int    `json:"line,omitempty"`
+	URL  string `json:"url,omitempty"`
+	Code string `json:"code,omitempty"`
 }
 
 type postDetectionRequest struct {
-	RunID    int64  `json:"run_id"`
-	EventID  *int64 `json:"event_id,omitempty"`
-	RuleName string `json:"rule_name"`
-	Severity string `json:"severity"`
-	Message  string `json:"message,omitempty"`
+	RunID    int64             `json:"run_id"`
+	EventID  *int64            `json:"event_id,omitempty"`
+	RuleName string            `json:"rule_name"`
+	Severity string            `json:"severity"`
+	Message  string            `json:"message,omitempty"`
+	Title    string            `json:"title,omitempty"`
+	Summary  string            `json:"summary,omitempty"`
+	Details  []detectionDetail `json:"details,omitempty"`
+	Source   *detectionSource  `json:"source,omitempty"`
 }
 
 // postDetectionByGitHubRequest is what the GitHub Actions composite action
 // posts — it doesn't know Citadel's internal run id, only the GitHub-side
 // repository + run_id pair. We resolve those to the row id.
 type postDetectionByGitHubRequest struct {
-	Repository  string `json:"repository"`
-	GitHubRunID string `json:"github_run_id"`
-	RuleName    string `json:"rule_name"`
-	Severity    string `json:"severity"`
-	Message     string `json:"message,omitempty"`
+	Repository  string            `json:"repository"`
+	GitHubRunID string            `json:"github_run_id"`
+	RuleName    string            `json:"rule_name"`
+	Severity    string            `json:"severity"`
+	Message     string            `json:"message,omitempty"`
+	PolicyMode  string            `json:"policy_mode,omitempty"`
+	Title       string            `json:"title,omitempty"`
+	Summary     string            `json:"summary,omitempty"`
+	Details     []detectionDetail `json:"details,omitempty"`
+	Source      *detectionSource  `json:"source,omitempty"`
 }
 
 var validSeverity = map[string]bool{
@@ -74,10 +101,12 @@ func (a *API) handlePostDetection(w http.ResponseWriter, r *http.Request) {
 		eventID.Int64 = *req.EventID
 	}
 
+	title, summary, detailsJSON, sourceJSON := structuredDetectionValues(
+		req.RuleName, req.Message, req.Title, req.Summary, req.Details, req.Source)
 	res, err := a.DB.ExecContext(r.Context(), `
-		INSERT INTO detections (run_id, event_id, rule_name, severity, message)
-		VALUES (?, ?, ?, ?, ?)`,
-		req.RunID, eventID, req.RuleName, req.Severity, req.Message)
+		INSERT INTO detections (run_id, event_id, rule_name, severity, message, title, summary, details, source)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		req.RunID, eventID, req.RuleName, req.Severity, req.Message, title, summary, detailsJSON, sourceJSON)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "insert detection: "+err.Error())
 		return
@@ -110,6 +139,10 @@ func (a *API) handlePostDetectionByGitHub(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusBadRequest, "severity must be info|low|medium|high|critical")
 		return
 	}
+	if req.PolicyMode != "" && req.PolicyMode != "audit" && req.PolicyMode != "block" {
+		writeError(w, http.StatusBadRequest, "policy_mode must be audit or block")
+		return
+	}
 
 	var runID int64
 	err := a.DB.QueryRowContext(r.Context(),
@@ -132,11 +165,17 @@ func (a *API) handlePostDetectionByGitHub(w http.ResponseWriter, r *http.Request
 		writeError(w, http.StatusInternalServerError, "query run: "+err.Error())
 		return
 	}
+	if req.PolicyMode != "" {
+		_, _ = a.DB.ExecContext(r.Context(),
+			`UPDATE runs SET policy_mode = ? WHERE id = ?`, req.PolicyMode, runID)
+	}
 
+	title, summary, detailsJSON, sourceJSON := structuredDetectionValues(
+		req.RuleName, req.Message, req.Title, req.Summary, req.Details, req.Source)
 	res, err := a.DB.ExecContext(r.Context(), `
-		INSERT INTO detections (run_id, rule_name, severity, message)
-		VALUES (?, ?, ?, ?)`,
-		runID, req.RuleName, req.Severity, req.Message)
+		INSERT INTO detections (run_id, rule_name, severity, message, title, summary, details, source)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		runID, req.RuleName, req.Severity, req.Message, title, summary, detailsJSON, sourceJSON)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "insert detection: "+err.Error())
 		return
@@ -153,7 +192,9 @@ func (a *API) handlePostDetectionByGitHub(w http.ResponseWriter, r *http.Request
 // ---------------------------------------------------------------------------
 
 func (a *API) handleListDetections(w http.ResponseWriter, r *http.Request) {
-	q := `SELECT id, run_id, event_id, rule_name, severity, COALESCE(message, ''), created_at
+	q := `SELECT id, run_id, event_id, rule_name, severity, COALESCE(message, ''),
+	             COALESCE(title, ''), COALESCE(summary, ''), COALESCE(details, ''), COALESCE(source, ''),
+	             created_at
 	      FROM detections`
 	args := []any{}
 
@@ -187,13 +228,18 @@ func (a *API) handleListDetections(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var d detectionRow
 		var evtID sql.NullInt64
-		if err := rows.Scan(&d.ID, &d.RunID, &evtID, &d.RuleName, &d.Severity, &d.Message, &d.CreatedAt); err != nil {
+		var detailsJSON, sourceJSON string
+		if err := rows.Scan(
+			&d.ID, &d.RunID, &evtID, &d.RuleName, &d.Severity, &d.Message,
+			&d.Title, &d.Summary, &detailsJSON, &sourceJSON, &d.CreatedAt,
+		); err != nil {
 			writeError(w, http.StatusInternalServerError, "scan: "+err.Error())
 			return
 		}
 		if evtID.Valid {
 			d.EventID = &evtID.Int64
 		}
+		hydrateDetectionPresentation(&d, detailsJSON, sourceJSON)
 		out = append(out, d)
 	}
 	writeJSON(w, http.StatusOK, out)
@@ -203,7 +249,9 @@ func (a *API) handleListDetections(w http.ResponseWriter, r *http.Request) {
 // the run detail response.
 func (a *API) listDetectionsForRun(ctx context.Context, runID int64) ([]detectionRow, error) {
 	rows, err := a.DB.QueryContext(ctx, `
-		SELECT id, run_id, event_id, rule_name, severity, COALESCE(message, ''), created_at
+		SELECT id, run_id, event_id, rule_name, severity, COALESCE(message, ''),
+		       COALESCE(title, ''), COALESCE(summary, ''), COALESCE(details, ''), COALESCE(source, ''),
+		       created_at
 		FROM detections WHERE run_id = ?
 		ORDER BY created_at DESC`, runID)
 	if err != nil {
@@ -215,13 +263,138 @@ func (a *API) listDetectionsForRun(ctx context.Context, runID int64) ([]detectio
 	for rows.Next() {
 		var d detectionRow
 		var evtID sql.NullInt64
-		if err := rows.Scan(&d.ID, &d.RunID, &evtID, &d.RuleName, &d.Severity, &d.Message, &d.CreatedAt); err != nil {
+		var detailsJSON, sourceJSON string
+		if err := rows.Scan(
+			&d.ID, &d.RunID, &evtID, &d.RuleName, &d.Severity, &d.Message,
+			&d.Title, &d.Summary, &detailsJSON, &sourceJSON, &d.CreatedAt,
+		); err != nil {
 			return nil, err
 		}
 		if evtID.Valid {
 			d.EventID = &evtID.Int64
 		}
+		hydrateDetectionPresentation(&d, detailsJSON, sourceJSON)
 		out = append(out, d)
 	}
 	return out, nil
+}
+
+func structuredDetectionValues(
+	ruleName, message, title, summary string,
+	details []detectionDetail,
+	source *detectionSource,
+) (string, string, string, string) {
+	title = strings.TrimSpace(title)
+	summary = strings.TrimSpace(summary)
+	if title == "" {
+		title = formatDetectionTitle(ruleName)
+	}
+	if summary == "" || len(details) == 0 {
+		parsedSummary, parsedDetails := parseDetectionMessage(message)
+		if summary == "" {
+			summary = parsedSummary
+		}
+		if len(details) == 0 {
+			details = parsedDetails
+		}
+	}
+	detailsJSON, _ := json.Marshal(details)
+	sourceJSON := ""
+	if source != nil {
+		b, _ := json.Marshal(source)
+		sourceJSON = string(b)
+	}
+	return title, summary, string(detailsJSON), sourceJSON
+}
+
+func hydrateDetectionPresentation(d *detectionRow, detailsJSON, sourceJSON string) {
+	if strings.TrimSpace(detailsJSON) != "" {
+		_ = json.Unmarshal([]byte(detailsJSON), &d.Details)
+	}
+	if strings.TrimSpace(sourceJSON) != "" {
+		var source detectionSource
+		if err := json.Unmarshal([]byte(sourceJSON), &source); err == nil {
+			d.Source = &source
+		}
+	}
+	if d.Title == "" || d.Summary == "" || len(d.Details) == 0 {
+		summary, details := parseDetectionMessage(d.Message)
+		if d.Title == "" {
+			d.Title = formatDetectionTitle(d.RuleName)
+		}
+		if d.Summary == "" {
+			d.Summary = summary
+		}
+		if len(d.Details) == 0 {
+			d.Details = details
+		}
+	}
+}
+
+func formatDetectionTitle(ruleName string) string {
+	parts := strings.FieldsFunc(ruleName, func(r rune) bool {
+		return r == '_' || r == '-' || r == '.'
+	})
+	for i, p := range parts {
+		if p == "" {
+			continue
+		}
+		switch strings.ToLower(p) {
+		case "ip", "pid", "url", "tcp", "dns", "bpf":
+			parts[i] = strings.ToUpper(p)
+			continue
+		}
+		parts[i] = strings.ToUpper(p[:1]) + p[1:]
+	}
+	title := strings.Join(parts, " ")
+	if strings.TrimSpace(title) == "" {
+		return "Detection"
+	}
+	return title
+}
+
+var (
+	processRe = regexp.MustCompile(`(?:^|process\s+)([a-zA-Z0-9_.-]+)\(pid=([0-9]+)`)
+	fieldRe   = regexp.MustCompile(`([a-zA-Z_]+)="([^"]*)"`)
+)
+
+func parseDetectionMessage(message string) (string, []detectionDetail) {
+	message = strings.TrimSpace(message)
+	if message == "" {
+		return "No detection details were provided.", nil
+	}
+	details := make([]detectionDetail, 0, 6)
+	if match := processRe.FindStringSubmatch(message); len(match) == 3 {
+		details = append(details,
+			detectionDetail{Label: "Process", Value: match[1]},
+			detectionDetail{Label: "PID", Value: match[2]},
+		)
+	}
+	for _, match := range fieldRe.FindAllStringSubmatch(message, -1) {
+		if len(match) != 3 {
+			continue
+		}
+		label := formatDetectionTitle(match[1])
+		value := cleanDetectionValue(match[2])
+		if value == "" {
+			value = "unknown"
+		}
+		details = append(details, detectionDetail{Label: label, Value: value})
+	}
+	if strings.Contains(message, "blocked TCP connect") {
+		return "Outbound TCP connection was blocked by Citadel.", details
+	}
+	if before, _, ok := strings.Cut(message, "—"); ok {
+		return strings.TrimSpace(before), details
+	}
+	return message, details
+}
+
+func cleanDetectionValue(value string) string {
+	value = strings.TrimSpace(value)
+	lower := strings.ToLower(value)
+	if strings.Contains(lower, "unknown hostname") {
+		return "unknown"
+	}
+	return value
 }

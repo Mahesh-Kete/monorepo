@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 import { api } from "@/lib/api";
 import type { RunSummary } from "@/lib/types";
-import { JobStatusDot, ModeBadge, SeverityBadge } from "@/components/badges";
+import { ModeBadge, RunStatusBadge, SeverityBadge } from "@/components/badges";
 import { LiveIndicator } from "@/components/live-indicator";
 import { useLivePoll } from "@/lib/use-live-poll";
 
@@ -242,11 +242,8 @@ function RepoGroupCard({
         </span>
 
         <span className="ml-3 flex items-center gap-2 text-xs">
-          <JobStatusDot status={latest.gh_status || latest.status} />
           <span className="text-ink-muted">latest:</span>
-          <span className="capitalize">
-            {(latest.gh_conclusion || latest.gh_status || latest.status).replace("_", " ")}
-          </span>
+          <RunStatusBadge status={latest.gh_conclusion || latest.gh_status || latest.status} />
           <span className="text-ink-subtle">· {relativeTime(latest.started_at)}</span>
         </span>
 
@@ -272,8 +269,7 @@ function RepoGroupCard({
                 <Th>Workflow</Th>
                 <Th>Run</Th>
                 <Th>Commit</Th>
-                <Th>Mode</Th>
-                <Th>Citadel</Th>
+                <Th>Policy Mode</Th>
                 <Th>Events</Th>
                 <Th>Detections</Th>
                 <Th>Started</Th>
@@ -284,11 +280,8 @@ function RepoGroupCard({
               {runs.map((r) => (
                 <tr key={r.id} className="hover:bg-brand-50/40 transition-colors">
                   <Td>
-                    <Link href={`/runs/${r.id}`} className="inline-flex items-center gap-1.5">
-                      <JobStatusDot status={r.gh_status || r.status} />
-                      <span className="text-xs text-ink-muted capitalize">
-                        {(r.gh_conclusion || r.gh_status || r.status).replace("_", " ")}
-                      </span>
+                    <Link href={`/runs/${r.id}`} className="inline-flex items-center">
+                      <RunStatusBadge status={r.gh_conclusion || r.gh_status || r.status} />
                     </Link>
                   </Td>
                   <Td>
@@ -308,17 +301,6 @@ function RepoGroupCard({
                     ) : "—"}
                   </Td>
                   <Td><ModeBadge mode={r.policy_mode} /></Td>
-                  <Td>
-                    {r.agent_seen ? (
-                      <span className="inline-flex items-center gap-1 rounded border border-ok-500/30 bg-ok-50 px-1.5 py-0.5 text-[10px] font-medium text-ok-700 uppercase">
-                        Citadel
-                      </span>
-                    ) : (
-                      <span className="inline-flex items-center gap-1 rounded border border-surface-line bg-surface-rail px-1.5 py-0.5 text-[10px] font-medium text-ink-subtle uppercase">
-                        Agent not installed
-                      </span>
-                    )}
-                  </Td>
                   <Td>
                     <div className="flex items-center gap-2 mono text-xs text-ink-muted">
                       <span title="network">🌐 {r.event_counts.network}</span>

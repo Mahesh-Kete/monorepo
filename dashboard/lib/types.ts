@@ -99,6 +99,18 @@ export interface DetectionRow {
   rule_name: string;
   severity: Severity;
   message?: string;
+  title?: string;
+  summary?: string;
+  details?: Array<{
+    label: string;
+    value: string;
+  }>;
+  source?: {
+    file?: string;
+    line?: number;
+    url?: string;
+    code?: string;
+  };
   created_at: string;
 }
 

@@ -100,6 +100,7 @@ func (a *API) handleListRuns(w http.ResponseWriter, r *http.Request) {
 					WHEN 'info'     THEN 1 ELSE 0 END DESC
 				LIMIT 1), '') AS severity_max
 		FROM runs r
+		WHERE COALESCE(r.agent_seen, 0) = 1
 		ORDER BY r.started_at DESC
 		LIMIT ?`, limit)
 	if err != nil {

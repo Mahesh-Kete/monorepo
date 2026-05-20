@@ -53,7 +53,8 @@ runs:
           "ref":          "${GITHUB_REF}",
           "actor":        "${GITHUB_ACTOR}",
           "event_name":   "${GITHUB_EVENT_NAME}",
-          "job":          "${GITHUB_JOB}"
+          "job":          "${GITHUB_JOB}",
+          "policy_mode":  "${{ inputs.mode }}"
         }
         EOF
         : > /tmp/citadel-current-step
@@ -188,10 +189,11 @@ runs:
           IMPOSTER_FOUND=1
           curl -fsS -X POST "$BACKEND/api/detections/by-github-run" \
             -H 'Content-Type: application/json' \
-            -d "$(jq -n --arg r "$REPO" --arg g "$RUN" --arg m "$msg" '{
+            -d "$(jq -n --arg r "$REPO" --arg g "$RUN" --arg m "$msg" --arg pm "$MODE" '{
               repository: $r, github_run_id: $g,
               rule_name: "imposter_commit", severity: "critical",
-              message: $m
+              message: $m,
+              policy_mode: $pm
             }')" >/dev/null \
             && echo "✗ detection posted: $msg" \
             || echo "(failed to post detection to backend — continuing)"

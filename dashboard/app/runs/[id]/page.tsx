@@ -3,24 +3,23 @@
 import { useState } from "react";
 import { useParams } from "next/navigation";
 import {
-  Globe2, FileText, Cpu, LayoutDashboard, AlertTriangle,
+  Globe2, FileText, LayoutDashboard, AlertTriangle,
   GitCommit, User, Calendar, Hash,
 } from "lucide-react";
-import { api, type ProcessTreeNode } from "@/lib/api";
+import { api } from "@/lib/api";
 import type { CitadelEvent, DetectionRow, GitHubActionLogRow, RunDetail } from "@/lib/types";
 import {
-  JobStatusDot, ModeBadge, SeverityBadge, StatusPill,
+  ModeBadge, RunStatusBadge, SeverityBadge, StatusPill,
 } from "@/components/badges";
 import { LiveIndicator } from "@/components/live-indicator";
 import { useLivePoll } from "@/lib/use-live-poll";
 
-type Tab = "summary" | "network" | "files" | "processes" | "action_logs";
+type Tab = "summary" | "network" | "files" | "action_logs";
 
 const TABS: { id: Tab; label: string; icon: React.ReactNode }[] = [
   { id: "summary",         label: "Summary",         icon: <LayoutDashboard className="h-4 w-4" /> },
   { id: "network",         label: "Network Events",  icon: <Globe2 className="h-4 w-4" /> },
   { id: "files",           label: "File Write Events", icon: <FileText className="h-4 w-4" /> },
-  { id: "processes",       label: "Process Events",  icon: <Cpu className="h-4 w-4" /> },
   { id: "action_logs",     label: "Action Logs",     icon: <AlertTriangle className="h-4 w-4" /> },
 ];
 
@@ -30,15 +29,9 @@ export default function RunDetailPage() {
   const [tab, setTab] = useState<Tab>("summary");
 
   // Poll run detail every 2s (events + detections refresh as the workflow runs).
-  // Process tree polls every 5s (changes less frequently).
   const { data, error: err, updatedAt } = useLivePoll<RunDetail>(
     () => api.getRun(runId),
     2000,
-    !!runId,
-  );
-  const { data: tree } = useLivePoll<ProcessTreeNode[]>(
-    () => api.getProcessTree(runId),
-    5000,
     !!runId,
   );
 
@@ -70,7 +63,6 @@ export default function RunDetailPage() {
             {tab === "summary" && <SummaryTab run={run} events={events} detections={detections} />}
             {tab === "network" && <NetworkTab events={byType("network")} />}
             {tab === "files" && <FilesTab events={[...byType("file"), ...byType("file_tamper")]} />}
-            {tab === "processes" && <ProcessTab tree={tree} flat={byType("process")} />}
             {tab === "action_logs" && <ActionLogsTab logs={data.action_logs ?? []} />}
           </div>
         </section>
@@ -87,7 +79,7 @@ function RunHeader({ run }: { run: RunDetail["run"] }) {
   return (
     <div className="rounded-md border border-surface-line bg-surface-card shadow-card p-4">
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <JobStatusDot status={run.status} />
+        <RunStatusBadge status={run.gh_conclusion || run.gh_status || run.status} />
         <h1 className="text-lg font-semibold">{run.repository}</h1>
         <span className="text-ink-muted">·</span>
         <span className="text-ink-muted">{run.workflow ?? "(no workflow)"}</span>
@@ -131,18 +123,16 @@ function JobRail({ run }: { run: RunDetail["run"] }) {
     <div className="rounded-md border border-surface-line bg-surface-rail p-3 sticky top-20">
       <h2 className="text-xs font-medium text-ink-muted uppercase tracking-wide mb-2">Job</h2>
       <div className="rounded bg-surface-card border border-surface-line p-2.5">
-        <div className="flex items-center gap-2">
-          <JobStatusDot status={run.status} />
+        <div className="flex flex-wrap items-center gap-2">
           <span className="text-sm font-medium">build</span>
+          <RunStatusBadge status={run.gh_conclusion || run.gh_status || run.status} />
         </div>
-        <div className="mt-1 text-xs text-ink-muted capitalize">{run.status.replace("_", " ")}</div>
       </div>
 
       <h2 className="mt-4 text-xs font-medium text-ink-muted uppercase tracking-wide mb-2">Quick counts</h2>
       <ul className="space-y-1.5 text-sm">
         <RailRow label="Network" count={counts.network} />
         <RailRow label="Files" count={counts.file + counts.file_tamper} />
-        <RailRow label="Processes" count={counts.process} />
         <RailRow label="Detections" count={run.detection_count} severity={run.severity_max} />
       </ul>
     </div>
@@ -200,16 +190,14 @@ function SummaryTab({ run, events, detections }: { run: RunDetail["run"]; events
   const blocked = netEvents.filter((e) => e.network?.blocked === true).length;
   const distinctEndpoints = new Set(netEvents.map((e) => e.network?.hostname || e.network?.dst_ip)).size;
   const fileWrites = events.filter((e) => e.type === "file" || e.type === "file_tamper").length;
-  const procExecs = events.filter((e) => e.type === "process").length;
 
   return (
     <div className="space-y-5">
-      <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
+      <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
         <Tile label="Distinct endpoints" value={distinctEndpoints} accent="brand" />
         <Tile label="Allowed calls" value={allowed} accent="ok" />
         <Tile label="Blocked calls" value={blocked} accent={blocked > 0 ? "block" : "neutral"} />
         <Tile label="File writes" value={fileWrites} accent="neutral" />
-        <Tile label="Process execs" value={procExecs} accent="neutral" />
       </div>
 
       {blocked > 0 && (
@@ -248,15 +236,17 @@ function DetectionsList({ detections }: { detections: DetectionRow[] }) {
       {detections.length === 0 ? (
         <p className="text-ink-subtle text-sm p-4">No findings.</p>
       ) : (
-        <ul className="divide-y divide-surface-line">
+        <ul className="space-y-3 p-3">
           {detections.map((d) => (
-            <li key={d.id} className="px-3 py-2.5 hover:bg-brand-50/40">
-              <div className="flex items-center gap-2">
+            <li key={d.id} className="rounded-md border border-surface-line bg-surface-card p-3 shadow-sm">
+              <div className="flex flex-wrap items-center gap-2">
                 <SeverityBadge severity={d.severity} />
-                <span className="mono text-sm text-ink-muted">{d.rule_name}</span>
+                <span className="text-sm font-medium text-ink">{d.title || formatRuleName(d.rule_name)}</span>
+                <span className="mono rounded bg-surface-rail px-1.5 py-0.5 text-xs text-ink-muted">{d.rule_name}</span>
                 <span className="ml-auto text-xs text-ink-subtle">{new Date(d.created_at).toLocaleTimeString()}</span>
               </div>
-              <p className="mt-1 text-sm">{d.message}</p>
+              <DetectionMessage detection={d} />
+              <DetectionSourceBlock source={d.source} />
             </li>
           ))}
         </ul>
@@ -265,26 +255,125 @@ function DetectionsList({ detections }: { detections: DetectionRow[] }) {
   );
 }
 
+function DetectionMessage({ detection }: { detection: DetectionRow }) {
+  const fallback = parseDetectionMessage(detection.message ?? "");
+  const summary = detection.summary || fallback?.summary;
+  const details = detection.details?.length ? detection.details : fallback?.details ?? [];
+
+  if (!summary && details.length === 0) {
+    return <p className="mt-2 text-sm text-ink-muted">No detection details were provided.</p>;
+  }
+
+  return (
+    <div className="mt-2 space-y-2">
+      {summary && <p className="text-sm leading-6 text-ink">{summary}</p>}
+      {details.length > 0 && (
+        <dl className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3">
+          {details.map((detail) => (
+            <div
+              key={detail.label}
+              className="rounded border border-surface-line bg-surface-rail/70 px-2.5 py-2"
+            >
+              <dt className="text-xs uppercase tracking-wide text-ink-subtle">{detail.label}</dt>
+              <dd className="mt-0.5 break-words font-mono text-sm text-ink">{detail.value}</dd>
+            </div>
+          ))}
+        </dl>
+      )}
+    </div>
+  );
+}
+
+function DetectionSourceBlock({ source }: { source?: DetectionRow["source"] }) {
+  if (!source) return null;
+
+  const location = [source.file, source.line ? `:${source.line}` : ""].filter(Boolean).join("");
+  return (
+    <div className="mt-3 rounded-md border border-zinc-700 bg-zinc-950 p-3 font-mono text-sm">
+      {location && (
+        source.url ? (
+          <a
+            href={source.url}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="text-xs text-blue-300 underline underline-offset-2"
+          >
+            {location}
+          </a>
+        ) : (
+          <div className="text-xs text-zinc-400">{location}</div>
+        )
+      )}
+      {source.code && (
+        <pre className="mt-2 max-h-64 overflow-x-auto whitespace-pre-wrap rounded bg-zinc-900 p-3 text-zinc-100">
+          <code>{source.code}</code>
+        </pre>
+      )}
+    </div>
+  );
+}
+
+function parseDetectionMessage(message: string): { summary: string; details: Array<{ label: string; value: string }> } | null {
+  const text = message.trim();
+  if (!text) return null;
+
+  const details: { label: string; value: string }[] = [];
+  const processMatch = text.match(/^([a-zA-Z0-9_.-]+)\(pid=(\d+)\)/);
+  if (processMatch) {
+    details.push({ label: "Process", value: processMatch[1] });
+    details.push({ label: "PID", value: processMatch[2] });
+  }
+
+  for (const [label, pattern] of [
+    ["Hostname", /hostname="([^"]+)"/],
+    ["IP", /ip="([^"]+)"/],
+    ["Port", /port="([^"]+)"/],
+  ] as const) {
+    const match = text.match(pattern);
+    if (match) details.push({ label, value: cleanDetectionValue(match[1]) });
+  }
+
+  const summary = text.includes("blocked TCP connect")
+    ? "Outbound TCP connection was blocked by Citadel."
+    : text.split("—")[0].trim();
+
+  return { summary, details };
+}
+
+function cleanDetectionValue(value: string) {
+  return value.replace(/^<unknown hostname.*$/i, "unknown").trim();
+}
+
+function formatRuleName(rule: string) {
+  return rule
+    .split(/[_-]+/)
+    .filter(Boolean)
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+}
+
 // ============================================================================
 // Network Events tab — primary table, StepSecurity-style columns
 // ============================================================================
 
 function NetworkTab({ events }: { events: CitadelEvent[] }) {
   const [filter, setFilter] = useState("");
-  const [showBlocked, setShowBlocked] = useState<"all" | "allowed" | "blocked">("all");
+  const [statusFilter, setStatusFilter] = useState<"all" | "allowed" | "blocked">("all");
 
   const rows = events.filter((e) => {
-    if (showBlocked === "allowed" && e.network?.blocked === true) return false;
-    if (showBlocked === "blocked" && e.network?.blocked !== true) return false;
+    if (statusFilter === "allowed" && e.network?.blocked === true) return false;
+    if (statusFilter === "blocked" && e.network?.blocked !== true) return false;
     if (!filter) return true;
     const s = filter.toLowerCase();
     return (
       (e.network?.hostname ?? "").toLowerCase().includes(s) ||
       (e.network?.dst_ip ?? "").toLowerCase().includes(s) ||
-      (e.network?.process ?? "").toLowerCase().includes(s) ||
-      (e.workflow.step ?? "").toLowerCase().includes(s)
+      (e.network?.process ?? "").toLowerCase().includes(s)
     );
   });
+  const setToggleFilter = (next: "allowed" | "blocked") => {
+    setStatusFilter((current) => (current === next ? "all" : next));
+  };
 
   return (
     <Card
@@ -298,30 +387,66 @@ function NetworkTab({ events }: { events: CitadelEvent[] }) {
             onChange={(e) => setFilter(e.target.value)}
             className="rounded border border-surface-line px-2 py-1 text-sm mono focus:outline-none focus:border-brand-500"
           />
-          <select
-            value={showBlocked}
-            onChange={(e) => setShowBlocked(e.target.value as any)}
-            className="rounded border border-surface-line bg-surface-card px-2 py-1 text-sm"
+          <FilterButton
+            active={statusFilter === "allowed"}
+            variant="allow"
+            onClick={() => setToggleFilter("allowed")}
           >
-            <option value="all">All</option>
-            <option value="allowed">Allowed only</option>
-            <option value="blocked">Blocked only</option>
-          </select>
+            Allow only
+          </FilterButton>
+          <FilterButton
+            active={statusFilter === "blocked"}
+            variant="block"
+            onClick={() => setToggleFilter("blocked")}
+          >
+            Block only
+          </FilterButton>
         </div>
       }
     >
       <DenseTable
-        head={["Status", "Time", "Process", "Destination", "Step", "Chain"]}
+        head={["Status", "Time", "Process", "Destination", "Domain"]}
         rows={rows.map((e) => [
           <StatusPill key="s" allowed={e.network?.blocked !== true} />,
           <span className="mono text-ink-muted text-xs">{new Date(e.timestamp).toLocaleTimeString()}</span>,
           <span className="mono">{e.network?.process || "?"}</span>,
-          <span className="mono">{e.network?.hostname || e.network?.dst_ip}<span className="text-ink-subtle">:{e.network?.dst_port}</span></span>,
-          <span className="text-ink-muted">{e.workflow.step || "—"}</span>,
-          <span className="mono text-xs text-ink-subtle">{(e.process_chain ?? []).join(" → ") || "—"}</span>,
+          <span className="mono">{e.network?.dst_ip}<span className="text-ink-subtle">:{e.network?.dst_port}</span></span>,
+          <span className="mono text-xs text-ink-muted">{e.network?.hostname || "—"}</span>,
         ])}
       />
     </Card>
+  );
+}
+
+function FilterButton({
+  active,
+  variant,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  variant: "allow" | "block";
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  const activeClass =
+    variant === "allow"
+      ? "border-ok-500 bg-ok-50 text-ok-700"
+      : "border-block-500 bg-block-50 text-block-700";
+
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      className={
+        "rounded border px-2 py-1 text-sm transition-colors " +
+        (active
+          ? activeClass
+          : "border-surface-line bg-surface-card text-ink-muted hover:text-ink")
+      }
+    >
+      {children}
+    </button>
   );
 }
 
@@ -351,61 +476,6 @@ function FilesTab({ events }: { events: CitadelEvent[] }) {
   );
 }
 
-// ============================================================================
-// Process Events tab — tree + flat table
-// ============================================================================
-
-function ProcessTab({ tree, flat }: { tree: ProcessTreeNode[] | null; flat: CitadelEvent[] }) {
-  return (
-    <div className="space-y-4">
-      <Card title="Process tree" count={tree?.length ?? 0}>
-        {tree && tree.length > 0 ? (
-          <div className="p-3 space-y-1">
-            {tree.map((n) => <TreeNode key={n.pid} node={n} depth={0} />)}
-          </div>
-        ) : (
-          <p className="text-ink-subtle text-sm p-4">No process exec events captured.</p>
-        )}
-      </Card>
-      <Card title="Process exec events" count={flat.length}>
-        <DenseTable
-          head={["Time", "PID", "PPID", "Comm", "Filename", "Args", "Step"]}
-          rows={flat.map((e) => [
-            <span className="mono text-ink-muted text-xs">{new Date(e.timestamp).toLocaleTimeString()}</span>,
-            <span className="mono">{e.process?.pid}</span>,
-            <span className="mono text-ink-muted">{e.process?.ppid}</span>,
-            <span className="mono font-medium">{e.process?.comm}</span>,
-            <span className="mono text-ink-muted">{e.process?.filename}</span>,
-            <span className="mono text-ink-muted truncate inline-block max-w-[24rem]">{(e.process?.args ?? []).join(" ")}</span>,
-            <span className="text-ink-muted">{e.workflow.step || "—"}</span>,
-          ])}
-        />
-      </Card>
-    </div>
-  );
-}
-
-function TreeNode({ node, depth }: { node: ProcessTreeNode; depth: number }) {
-  const [open, setOpen] = useState(true);
-  return (
-    <div style={{ paddingLeft: depth * 16 }}>
-      <button
-        onClick={() => setOpen(!open)}
-        className="text-left text-sm w-full hover:bg-brand-50/40 rounded px-2 py-1 flex items-center gap-2"
-      >
-        <span className="text-ink-subtle mono">{node.children?.length ? (open ? "▾" : "▸") : "•"}</span>
-        <span className="mono font-medium">{node.comm}</span>
-        <span className="mono text-xs text-ink-subtle">pid={node.pid}</span>
-        {node.args && node.args.length > 1 && (
-          <span className="mono text-xs text-ink-muted truncate">{node.args.slice(1).join(" ")}</span>
-        )}
-      </button>
-      {open && node.children?.map((c) => <TreeNode key={c.pid} node={c} depth={depth + 1} />)}
-    </div>
-  );
-}
-
-// ============================================================================
 // Action Logs tab — GitHub Actions annotations/log lines
 // ============================================================================
 

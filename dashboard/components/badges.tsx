@@ -53,19 +53,58 @@ export function SeverityBadge({ severity }: { severity: Severity | string }) {
 // ModeBadge — policy mode (audit / block) per run.
 // ---------------------------------------------------------------------------
 export function ModeBadge({ mode }: { mode: string }) {
-  const isBlock = mode === "block";
+  const normalized = mode.toLowerCase();
+  const isBlock = normalized === "block";
   const cls = isBlock
     ? "bg-block-50 text-block-700 border-block-500/40"
     : "bg-warn-50 text-warn-700 border-warn-500/40";
   return (
-    <span className={`inline-flex items-center rounded border px-2 py-0.5 text-xs font-medium uppercase ${cls}`}>
+    <span
+      className={`inline-flex items-center rounded border px-2 py-0.5 text-xs font-medium uppercase ${cls}`}
+    >
       {mode}
     </span>
   );
 }
 
 // ---------------------------------------------------------------------------
-// JobStatusDot — colored circle for job conclusion.
+// RunStatusBadge — LeetCode-style status chip for workflow runs.
+// ---------------------------------------------------------------------------
+export function RunStatusBadge({ status }: { status: string }) {
+  const normalized = normalizeRunStatus(status);
+  const cls = {
+    success: "border-ok-500/30 bg-ok-50 text-ok-700",
+    progress: "border-brand-500/30 bg-brand-50 text-brand-700",
+    failure: "border-block-500/30 bg-block-50 text-block-700",
+    neutral: "border-surface-line bg-surface-rail text-ink-muted",
+  }[normalized.kind];
+
+  return (
+    <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5 text-xs font-medium ${cls}`}>
+      {normalized.label}
+    </span>
+  );
+}
+
+function normalizeRunStatus(status: string) {
+  const s = status.toLowerCase();
+  if (s === "success" || s === "succeeded" || s === "completed") {
+    return { kind: "success" as const, label: "Success" };
+  }
+  if (s === "in_progress" || s === "running" || s === "queued" || s === "pending" || s === "requested" || s === "waiting") {
+    return { kind: "progress" as const, label: "In Progress" };
+  }
+  if (s === "failure" || s === "failed" || s === "cancelled" || s === "timed_out" || s === "action_required") {
+    return { kind: "failure" as const, label: "Failure" };
+  }
+  return {
+    kind: "neutral" as const,
+    label: status ? status.replace("_", " ") : "Unknown",
+  };
+}
+
+// ---------------------------------------------------------------------------
+// JobStatusDot — compact colored circle for places that still need an icon.
 // ---------------------------------------------------------------------------
 export function JobStatusDot({ status }: { status: string }) {
   const s = status.toLowerCase();

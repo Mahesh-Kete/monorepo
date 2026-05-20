@@ -5,14 +5,14 @@ import { useParams } from "next/navigation";
 import Link from "next/link";
 import {
   ArrowLeft, FolderGit2, ExternalLink, Activity,
-  Globe2, FileText, Cpu, AlertTriangle, GitCommit,
+  Globe2, FileText, AlertTriangle, GitCommit,
 } from "lucide-react";
 import { api } from "@/lib/api";
 import type {
   CitadelEvent, ConnectedRepo, RunDetail, RunSummary,
 } from "@/lib/types";
 import {
-  JobStatusDot, ModeBadge, SeverityBadge, StatusPill,
+  ModeBadge, RunStatusBadge, SeverityBadge, StatusPill,
 } from "@/components/badges";
 import { LiveIndicator } from "@/components/live-indicator";
 import { useLivePoll } from "@/lib/use-live-poll";
@@ -181,7 +181,6 @@ function LatestRunCard({ run, detail }: { run: RunSummary; detail: RunDetail | n
   const events = detail?.events ?? [];
   const netCount = events.filter((e) => e.type === "network").length;
   const fileCount = events.filter((e) => e.type === "file" || e.type === "file_tamper").length;
-  const procCount = events.filter((e) => e.type === "process").length;
   const blocked = events.filter((e) => e.network?.blocked === true).length;
   const isLive = run.status === "in_progress" || run.gh_status === "in_progress";
 
@@ -191,7 +190,7 @@ function LatestRunCard({ run, detail }: { run: RunSummary; detail: RunDetail | n
       className="block rounded-md border border-surface-line bg-surface-card shadow-card p-4 hover:border-brand-500/60 transition"
     >
       <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-        <JobStatusDot status={run.status} />
+        <RunStatusBadge status={run.gh_conclusion || run.gh_status || run.status} />
         <span className="font-medium">{run.workflow || "(no workflow)"}</span>
         <span className="text-ink-muted">·</span>
         <span className="mono text-ink-muted text-sm">
@@ -221,10 +220,9 @@ function LatestRunCard({ run, detail }: { run: RunSummary; detail: RunDetail | n
         <span>{new Date(run.started_at).toLocaleString()}</span>
       </div>
 
-      <div className="mt-3 grid grid-cols-4 gap-2">
+      <div className="mt-3 grid grid-cols-3 gap-2">
         <Tile icon={<Globe2 className="h-3.5 w-3.5" />} label="Network" value={netCount} />
         <Tile icon={<FileText className="h-3.5 w-3.5" />} label="Files" value={fileCount} />
-        <Tile icon={<Cpu className="h-3.5 w-3.5" />} label="Processes" value={procCount} />
         <Tile
           icon={<AlertTriangle className="h-3.5 w-3.5" />}
           label="Blocked"
@@ -256,6 +254,7 @@ function Tile({
 function LiveEventStream({ events }: { events: CitadelEvent[] }) {
   // Newest first, capped at 100 to keep the page snappy.
   const rows = [...events]
+    .filter((e) => e.type !== "process")
     .sort((a, b) => +new Date(b.timestamp) - +new Date(a.timestamp))
     .slice(0, 100);
 
@@ -412,7 +411,7 @@ function RunHistoryTable({ runs }: { runs: RunSummary[] }) {
             <th className="px-3 py-2 text-left font-medium">Status</th>
             <th className="px-3 py-2 text-left font-medium">Workflow</th>
             <th className="px-3 py-2 text-left font-medium">Run</th>
-            <th className="px-3 py-2 text-left font-medium">Mode</th>
+            <th className="px-3 py-2 text-left font-medium">Policy Mode</th>
             <th className="px-3 py-2 text-left font-medium">Events</th>
             <th className="px-3 py-2 text-left font-medium">Findings</th>
             <th className="px-3 py-2 text-left font-medium">Started</th>
@@ -426,11 +425,8 @@ function RunHistoryTable({ runs }: { runs: RunSummary[] }) {
             return (
               <tr key={r.id} className="hover:bg-brand-50/40">
                 <td className="px-3 py-2">
-                  <Link href={`/runs/${r.id}`} className="flex items-center gap-2">
-                    <JobStatusDot status={r.status} />
-                    <span className="text-xs capitalize text-ink-muted">
-                      {r.status.replace("_", " ")}
-                    </span>
+                  <Link href={`/runs/${r.id}`} className="inline-flex items-center">
+                    <RunStatusBadge status={r.gh_conclusion || r.gh_status || r.status} />
                   </Link>
                 </td>
                 <td className="px-3 py-2">

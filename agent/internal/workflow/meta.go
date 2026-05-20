@@ -4,13 +4,13 @@
 // Sources, in order of precedence (later sources override earlier ones for
 // non-empty fields):
 //
-//   1. GITHUB_* env vars currently set on the agent process.
-//   2. /tmp/citadel-meta.json — written by the citadel-setup composite
-//      action just before the agent starts. Contains the GITHUB_* vars
-//      as the runner saw them, so it survives even after the workflow
-//      step that started the agent exits.
-//   3. /tmp/citadel-current-step — sentinel file the composite action's
-//      step wrapper updates between user steps. Provides Meta.Step.
+//  1. GITHUB_* env vars currently set on the agent process.
+//  2. /tmp/citadel-meta.json — written by the citadel-setup composite
+//     action just before the agent starts. Contains the GITHUB_* vars
+//     as the runner saw them, so it survives even after the workflow
+//     step that started the agent exits.
+//  3. /tmp/citadel-current-step — sentinel file the composite action's
+//     step wrapper updates between user steps. Provides Meta.Step.
 //
 // Reads are cached for 500ms — the Step value changes per workflow step
 // (potentially every second on a busy CI), but we don't want to stat() the
@@ -38,21 +38,22 @@ type Meta struct {
 	Actor        string `json:"actor,omitempty"`
 	EventName    string `json:"event_name,omitempty"`
 	Job          string `json:"job,omitempty"`
+	PolicyMode   string `json:"policy_mode,omitempty"`
 	Step         string `json:"step,omitempty"`
 }
 
 // Default sentinel paths. Overridable via NewLoader fields if needed.
 const (
-	defaultMetaFile    = "/tmp/citadel-meta.json"
-	defaultStepFile    = "/tmp/citadel-current-step"
-	defaultRefreshTTL  = 500 * time.Millisecond
+	defaultMetaFile   = "/tmp/citadel-meta.json"
+	defaultStepFile   = "/tmp/citadel-current-step"
+	defaultRefreshTTL = 500 * time.Millisecond
 )
 
 // Loader caches the merged Meta and refreshes from disk at most every TTL.
 type Loader struct {
-	metaFile    string
-	stepFile    string
-	refreshTTL  time.Duration
+	metaFile   string
+	stepFile   string
+	refreshTTL time.Duration
 
 	mu          sync.Mutex
 	cached      Meta

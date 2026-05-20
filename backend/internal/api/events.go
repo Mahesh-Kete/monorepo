@@ -15,11 +15,11 @@ import (
 // fields below), and the original JSON bytes are stored verbatim as the
 // payload. json.RawMessage preserves the original encoding.
 type incomingEvent struct {
-	ID           string          `json:"id"`
-	Type         string          `json:"type"`
-	Timestamp    time.Time       `json:"timestamp"`
+	ID           string           `json:"id"`
+	Type         string           `json:"type"`
+	Timestamp    time.Time        `json:"timestamp"`
 	Workflow     incomingWorkflow `json:"workflow"`
-	ProcessChain []string        `json:"process_chain"`
+	ProcessChain []string         `json:"process_chain"`
 }
 
 type incomingWorkflow struct {
@@ -32,6 +32,7 @@ type incomingWorkflow struct {
 	Actor      string `json:"actor"`
 	EventName  string `json:"event_name"`
 	Job        string `json:"job"`
+	PolicyMode string `json:"policy_mode"`
 	Step       string `json:"step"`
 }
 
@@ -113,11 +114,14 @@ func upsertRun(ctx context.Context, tx *sql.Tx, wf incomingWorkflow) (int64, err
 	repo := wf.Repository
 	if repo == "" {
 		repo = "(unknown)"
+	} else {
+		repo = strings.ToLower(repo)
 	}
 	runID := wf.RunID
 	if runID == "" {
 		runID = "(local)"
 	}
+	policyMode := resolvePolicyMode(ctx, tx, repo, wf)
 
 	// Try to find existing.
 	var id int64
@@ -132,15 +136,31 @@ func upsertRun(ctx context.Context, tx *sql.Tx, wf incomingWorkflow) (int64, err
 				run_number  = COALESCE(NULLIF(?, ''), run_number),
 				sha         = COALESCE(NULLIF(?, ''), sha),
 				ref         = COALESCE(NULLIF(?, ''), ref),
-				actor       = COALESCE(NULLIF(?, ''), actor)
+				actor       = COALESCE(NULLIF(?, ''), actor),
+				policy_mode = COALESCE(NULLIF(?, ''), policy_mode)
 			WHERE id = ?`,
-			wf.Workflow, wf.RunNumber, wf.SHA, wf.Ref, wf.Actor, id)
+			wf.Workflow, wf.RunNumber, wf.SHA, wf.Ref, wf.Actor, policyMode, id)
 		return id, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return 0, err
 	}
 
+	// Insert new run.
+	res, err := tx.ExecContext(ctx, `
+		INSERT INTO runs (repository, workflow, run_id, run_number, sha, ref, actor, policy_mode)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		repo, wf.Workflow, runID, wf.RunNumber, wf.SHA, wf.Ref, wf.Actor, policyMode)
+	if err != nil {
+		return 0, err
+	}
+	return res.LastInsertId()
+}
+
+func resolvePolicyMode(ctx context.Context, tx *sql.Tx, repo string, wf incomingWorkflow) string {
+	if wf.PolicyMode == "audit" || wf.PolicyMode == "block" {
+		return wf.PolicyMode
+	}
 	// Resolve the most-applicable policy mode for this run so the dashboard's
 	// MODE column reflects what the agent is actually enforcing. We pick the
 	// most specific match: scope_repo+scope_workflow → scope_repo → no scope.
@@ -159,16 +179,7 @@ func upsertRun(ctx context.Context, tx *sql.Tx, wf incomingWorkflow) (int64, err
 	if policyMode == "" {
 		policyMode = "audit"
 	}
-
-	// Insert new run.
-	res, err := tx.ExecContext(ctx, `
-		INSERT INTO runs (repository, workflow, run_id, run_number, sha, ref, actor, policy_mode)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		repo, wf.Workflow, runID, wf.RunNumber, wf.SHA, wf.Ref, wf.Actor, policyMode)
-	if err != nil {
-		return 0, err
-	}
-	return res.LastInsertId()
+	return policyMode
 }
 
 // ---------------------------------------------------------------------------
@@ -176,12 +187,12 @@ func upsertRun(ctx context.Context, tx *sql.Tx, wf incomingWorkflow) (int64, err
 // ---------------------------------------------------------------------------
 
 type listedEvent struct {
-	ID        int64           `json:"id"`         // DB id (used by detector for ?after_id=)
-	RunID     int64           `json:"run_id"`     // DB id of the parent run
+	ID        int64           `json:"id"`     // DB id (used by detector for ?after_id=)
+	RunID     int64           `json:"run_id"` // DB id of the parent run
 	Type      string          `json:"type"`
 	Timestamp time.Time       `json:"timestamp"`
 	Step      string          `json:"step,omitempty"`
-	Payload   json.RawMessage `json:"payload"`    // full Event JSON as the agent emitted it
+	Payload   json.RawMessage `json:"payload"` // full Event JSON as the agent emitted it
 }
 
 func (a *API) handleListEvents(w http.ResponseWriter, r *http.Request) {

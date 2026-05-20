@@ -63,8 +63,7 @@ type connectedRepo struct {
 func (p *Poller) sweep(ctx context.Context) {
 	rows, err := p.DB.QueryContext(ctx, `
 		SELECT id, repository, COALESCE(token, '')
-		FROM connected_repos
-		WHERE token IS NOT NULL AND token != ''`)
+		FROM connected_repos`)
 	if err != nil {
 		p.Logger.Warn("list connected repos", "err", err)
 		return
@@ -96,19 +95,17 @@ func (p *Poller) sweep(ctx context.Context) {
 }
 
 func (p *Poller) syncRepo(ctx context.Context, r connectedRepo) error {
-	if strings.TrimSpace(r.Token) == "" {
-		return nil
-	}
-	runs, err := p.gh.ListRecentRuns(ctx, r.Token, r.Repository, perRepoLimit)
+	repo := strings.ToLower(r.Repository)
+	runs, err := p.gh.ListRecentRuns(ctx, r.Token, repo, perRepoLimit)
 	if err != nil {
 		return err
 	}
 	for _, wr := range runs {
-		if err := p.upsertRun(ctx, r.Repository, wr); err != nil {
-			p.Logger.Warn("upsert gh run", "repo", r.Repository, "run_id", wr.ID, "err", err)
+		if err := p.upsertRun(ctx, repo, wr); err != nil {
+			p.Logger.Warn("upsert gh run", "repo", repo, "run_id", wr.ID, "err", err)
 		}
 	}
-	p.Logger.Info("github poll", "repo", r.Repository, "runs", len(runs))
+	p.Logger.Info("github poll", "repo", repo, "runs", len(runs))
 	return nil
 }
 
@@ -119,6 +116,7 @@ func (p *Poller) upsertRun(ctx context.Context, repo string, wr WorkflowRun) err
 	runIDStr := strconv.FormatInt(wr.ID, 10)
 	runNumStr := strconv.FormatInt(wr.RunNumber, 10)
 	duration := wr.DurationSec()
+	status := dashboardStatus(wr.Status, wr.Conclusion)
 
 	// Try update first; if no row, insert.
 	res, err := p.DB.ExecContext(ctx, `
@@ -129,6 +127,7 @@ func (p *Poller) upsertRun(ctx context.Context, repo string, wr WorkflowRun) err
 			ref              = COALESCE(NULLIF(?, ''), ref),
 			actor            = COALESCE(NULLIF(?, ''), actor),
 			started_at       = COALESCE(?, started_at),
+			status           = COALESCE(NULLIF(?, ''), status),
 			gh_status        = ?,
 			gh_conclusion    = NULLIF(?, ''),
 			gh_html_url      = ?,
@@ -139,6 +138,7 @@ func (p *Poller) upsertRun(ctx context.Context, repo string, wr WorkflowRun) err
 		WHERE repository = ? AND run_id = ?`,
 		wr.Name, runNumStr, wr.HeadSHA, "refs/heads/"+wr.HeadBranch, wr.Actor.Login,
 		ifZeroTime(wr.RunStartedAt),
+		status,
 		wr.Status, wr.Conclusion, wr.HTMLURL,
 		duration, duration,
 		wr.Event, wr.HeadBranch,
@@ -157,11 +157,12 @@ func (p *Poller) upsertRun(ctx context.Context, repo string, wr WorkflowRun) err
 			 gh_status, gh_conclusion, gh_html_url, gh_duration_sec, gh_event_name, gh_head_branch,
 			 gh_synced_at, agent_seen)
 		VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(?, CURRENT_TIMESTAMP),
-		        'audit', 'in_progress',
+		        'audit', ?,
 		        ?, NULLIF(?, ''), ?, CASE WHEN ? > 0 THEN ? ELSE NULL END, NULLIF(?, ''), NULLIF(?, ''),
 		        CURRENT_TIMESTAMP, 0)`,
 		repo, wr.Name, runIDStr, runNumStr, wr.HeadSHA, "refs/heads/"+wr.HeadBranch, wr.Actor.Login,
 		ifZeroTime(wr.RunStartedAt),
+		status,
 		wr.Status, wr.Conclusion, wr.HTMLURL,
 		duration, duration,
 		wr.Event, wr.HeadBranch,
@@ -170,6 +171,25 @@ func (p *Poller) upsertRun(ctx context.Context, repo string, wr WorkflowRun) err
 		return fmt.Errorf("insert: %w", err)
 	}
 	return nil
+}
+
+func dashboardStatus(ghStatus, conclusion string) string {
+	switch strings.ToLower(conclusion) {
+	case "success":
+		return "success"
+	case "failure", "cancelled", "timed_out", "action_required":
+		return "failure"
+	}
+	switch strings.ToLower(ghStatus) {
+	case "queued", "requested", "waiting", "pending":
+		return "queued"
+	case "in_progress":
+		return "in_progress"
+	case "completed":
+		return "completed"
+	default:
+		return ghStatus
+	}
 }
 
 func ifZeroTime(t time.Time) any {
