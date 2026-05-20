@@ -1,6 +1,7 @@
 .PHONY: build-agent build-backend build-detector build-dashboard \
         docker-build docker-up docker-down \
-        local-images demo-reset
+        local-images demo-reset \
+        dev dev-setup dev-backend dev-detector dev-dashboard dev-clean
 
 build-agent:
 	$(MAKE) -C agent build
@@ -34,6 +35,50 @@ local-images:
 	@echo
 	@docker images --filter "reference=citadel-*:dev"
 	@echo "All four images built. Use with action: 'image-tag: dev'."
+
+# =============================================================================
+# Local dev (no Docker) — runs backend + detector + dashboard natively on Mac
+# =============================================================================
+
+# One-time setup: install Python venv, npm deps, create backend data dir.
+# Re-runnable safely.
+dev-setup:
+	@echo "==> backend: ensuring data dir"
+	@mkdir -p backend/data
+	@echo "==> detector: creating venv + installing deps"
+	@if [ ! -d detector/.venv ]; then \
+		cd detector && python3 -m venv .venv; \
+	fi
+	@cd detector && . .venv/bin/activate && pip install --quiet --upgrade pip \
+		&& pip install --quiet fastapi 'uvicorn[standard]>=0.27' httpx 'pydantic>=2.6' \
+		   python-dateutil pyyaml
+	@echo "==> dashboard: npm install"
+	@cd dashboard && npm install --no-audit --no-fund --silent
+	@echo
+	@echo "✓ dev-setup complete. Run 'make dev' to start everything."
+
+# Run all three services in parallel, sharing this terminal. Ctrl-C stops all.
+dev:
+	@./scripts/dev.sh
+
+# Run an individual service standalone (useful when iterating on one piece).
+dev-backend:
+	@cd backend && go run ./cmd/backend --addr=:8080 --db-path=./data/citadel.db
+
+dev-detector:
+	@cd detector && . .venv/bin/activate && uvicorn app.main:app --host 127.0.0.1 --port 8000
+
+dev-dashboard:
+	@cd dashboard && npm run dev
+
+# Nuke local-dev state: SQLite DB, Python venv, node_modules.
+dev-clean:
+	@rm -rf backend/data detector/.venv dashboard/node_modules dashboard/.next
+	@echo "✓ local dev state wiped"
+
+# =============================================================================
+# Demo reset
+# =============================================================================
 
 # Wipe state from previous demo runs so the next demo starts clean.
 # Linux-only bits (iptables) are guarded; failures are non-fatal.
