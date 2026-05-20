@@ -12,7 +12,7 @@ import type {
   CitadelEvent, ConnectedRepo, RunDetail, RunSummary,
 } from "@/lib/types";
 import {
-  JobStatusDot, SeverityBadge, StatusPill,
+  JobStatusDot, ModeBadge, SeverityBadge, StatusPill,
 } from "@/components/badges";
 import { LiveIndicator } from "@/components/live-indicator";
 import { useLivePoll } from "@/lib/use-live-poll";
@@ -197,6 +197,7 @@ function LatestRunCard({ run, detail }: { run: RunSummary; detail: RunDetail | n
         <span className="mono text-ink-muted text-sm">
           {run.run_number ? `#${run.run_number}` : `run ${run.run_id}`}
         </span>
+        <ModeBadge mode={run.policy_mode} />
         {isLive && (
           <span className="inline-flex items-center gap-1 text-xs text-brand-700">
             <Activity className="h-3.5 w-3.5 animate-pulse" />
@@ -411,6 +412,7 @@ function RunHistoryTable({ runs }: { runs: RunSummary[] }) {
             <th className="px-3 py-2 text-left font-medium">Status</th>
             <th className="px-3 py-2 text-left font-medium">Workflow</th>
             <th className="px-3 py-2 text-left font-medium">Run</th>
+            <th className="px-3 py-2 text-left font-medium">Mode</th>
             <th className="px-3 py-2 text-left font-medium">Events</th>
             <th className="px-3 py-2 text-left font-medium">Findings</th>
             <th className="px-3 py-2 text-left font-medium">Started</th>
@@ -439,6 +441,7 @@ function RunHistoryTable({ runs }: { runs: RunSummary[] }) {
                 <td className="px-3 py-2 mono text-xs text-ink-muted">
                   {r.run_number ? `#${r.run_number}` : r.run_id}
                 </td>
+                <td className="px-3 py-2"><ModeBadge mode={r.policy_mode} /></td>
                 <td className="px-3 py-2 mono">{totalEvents}</td>
                 <td className="px-3 py-2">
                   {r.detection_count > 0 ? (

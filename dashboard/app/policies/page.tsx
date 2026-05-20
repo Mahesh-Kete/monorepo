@@ -250,6 +250,7 @@ function NewPolicyDialog({ onClose, onSaved }: { onClose: () => void; onSaved: (
   const [name, setName] = useState("");
   const [repo, setRepo] = useState("");
   const [workflow, setWorkflow] = useState("");
+  const [mode, setMode] = useState<"audit" | "block">("audit");
   const [allowlist, setAllowlist] = useState("");
   const [err, setErr] = useState<string | null>(null);
 
@@ -260,7 +261,7 @@ function NewPolicyDialog({ onClose, onSaved }: { onClose: () => void; onSaved: (
         name,
         scope_repo: repo || undefined,
         scope_workflow: workflow || undefined,
-        mode: "block",
+        mode,
         allowlist: list,
         detection_rules: {},
       });
@@ -278,13 +279,25 @@ function NewPolicyDialog({ onClose, onSaved }: { onClose: () => void; onSaved: (
       >
         <h2 className="text-lg font-semibold mb-4">New Policy</h2>
         <p className="text-xs text-ink-muted mb-4">
-          Citadel only has one mode now (<span className="mono">block</span>). The allowlist
-          defines which destinations are permitted; everything else is dropped.
+          <b>audit</b> records findings without affecting the build.
+          <b> block</b> fails the build red on any critical/high detection
+          (notably imposter-commit references).
         </p>
         <div className="space-y-3 text-sm">
           <Field label="Name" value={name} setValue={setName} placeholder="victim-ci-block" />
           <Field label="Scope repo" value={repo} setValue={setRepo} placeholder="org/repo  (leave blank to apply to all)" />
           <Field label="Scope workflow" value={workflow} setValue={setWorkflow} placeholder="victim-ci  (leave blank for all workflows in scope)" />
+          <div>
+            <label className="block text-ink-muted mb-1">Mode</label>
+            <select
+              value={mode}
+              onChange={(e) => setMode(e.target.value as "audit" | "block")}
+              className="w-full rounded border border-surface-line bg-surface-card px-3 py-1.5 mono"
+            >
+              <option value="audit">audit  — observe + record only</option>
+              <option value="block">block  — fail the build on critical/high findings</option>
+            </select>
+          </div>
           <div>
             <label className="block text-ink-muted mb-1">Allowlist (one domain per line)</label>
             <textarea

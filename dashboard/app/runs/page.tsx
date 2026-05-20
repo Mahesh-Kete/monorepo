@@ -8,7 +8,7 @@ import {
 } from "lucide-react";
 import { api } from "@/lib/api";
 import type { RunSummary } from "@/lib/types";
-import { JobStatusDot, SeverityBadge } from "@/components/badges";
+import { JobStatusDot, ModeBadge, SeverityBadge } from "@/components/badges";
 import { LiveIndicator } from "@/components/live-indicator";
 import { useLivePoll } from "@/lib/use-live-poll";
 
@@ -272,6 +272,7 @@ function RepoGroupCard({
                 <Th>Workflow</Th>
                 <Th>Run</Th>
                 <Th>Commit</Th>
+                <Th>Mode</Th>
                 <Th>Citadel</Th>
                 <Th>Events</Th>
                 <Th>Detections</Th>
@@ -306,6 +307,7 @@ function RepoGroupCard({
                       </span>
                     ) : "—"}
                   </Td>
+                  <Td><ModeBadge mode={r.policy_mode} /></Td>
                   <Td>
                     {r.agent_seen ? (
                       <span className="inline-flex items-center gap-1 rounded border border-ok-500/30 bg-ok-50 px-1.5 py-0.5 text-[10px] font-medium text-ok-700 uppercase">

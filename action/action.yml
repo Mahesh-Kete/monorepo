@@ -6,12 +6,13 @@ branding:
   color: 'blue'
 
 inputs:
-  # mode is no longer configurable — Citadel runs in block mode only.
-  # Kept as an input for backwards-compat with workflows that still pass it.
   mode:
-    description: '(deprecated — always "block")'
+    description: |
+      audit  — detect anomalies, record them, but never fail the build.
+      block  — detect AND fail the build on any critical/high detection
+               (notably: imposter-commit references in workflow YAMLs).
     required: false
-    default: 'block'
+    default: 'audit'
   backend-url:
     description: 'Citadel backend URL (e.g. http://backend.internal:8080)'
     required: true
@@ -131,7 +132,7 @@ runs:
           -v "$WATCH_PATH":"$WATCH_PATH" \
           "${{ steps.img.outputs.ref }}" \
           run \
-            --mode=block \
+            --mode="${{ inputs.mode }}" \
             --backend-url="${{ inputs.backend-url }}" \
             --meta-file=/tmp/citadel-meta.json \
             --watch-path="$WATCH_PATH" \
@@ -155,16 +156,21 @@ runs:
       shell: bash
       env:
         GH_TOKEN: ${{ github.token }}
+        CITADEL_MODE: ${{ inputs.mode }}
       run: |
         BACKEND="${{ inputs.backend-url }}"
         REPO="${GITHUB_REPOSITORY}"
         RUN="${GITHUB_RUN_ID}"
+        MODE="${CITADEL_MODE:-audit}"
 
-        echo "==> Citadel imposter-commit scan over .github/workflows/"
+        echo "==> Citadel imposter-commit scan over .github/workflows/  (mode=$MODE)"
         if [ ! -d .github/workflows ]; then
           echo "no workflows dir; skipping"
           exit 0
         fi
+
+        # Track findings — drives the final exit code in block mode.
+        IMPOSTER_FOUND=0
 
         # Collect pinned SHA references: "uses: org/repo[/path]@<40hex>".
         # awk strips inline comments + whitespace; sort -u dedups.
@@ -179,6 +185,7 @@ runs:
 
         post_detection() {
           local msg="$1"
+          IMPOSTER_FOUND=1
           curl -fsS -X POST "$BACKEND/api/detections/by-github-run" \
             -H 'Content-Type: application/json' \
             -d "$(jq -n --arg r "$REPO" --arg g "$RUN" --arg m "$msg" '{
@@ -219,6 +226,21 @@ runs:
               ;;
           esac
         done <<< "$refs"
+
+        # Mode-aware enforcement: in block mode we exit non-zero so the
+        # workflow itself fails red and downstream steps don't run.
+        if [ "$IMPOSTER_FOUND" -eq 1 ]; then
+          if [ "$MODE" = "block" ]; then
+            echo
+            echo "==> BLOCK MODE: imposter-commit reference(s) detected — failing the job."
+            exit 1
+          else
+            echo
+            echo "==> AUDIT MODE: imposter-commit reference(s) detected and recorded."
+            echo "    The build is allowed to proceed. Switch the action's"
+            echo "    'mode' input to 'block' to enforce."
+          fi
+        fi
 
     # ----------------------------------------------------------------
     # 6. Post-job: diff the workspace against the baseline (always),

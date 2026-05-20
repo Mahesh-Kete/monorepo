@@ -61,6 +61,7 @@ jobs:
       - name: Citadel
         uses: %s
         with:
+          mode: audit          # switch to "block" to fail builds on critical detections
           backend-url: %s
           image-tag: dev
           watch-path: ${{ github.workspace }}
